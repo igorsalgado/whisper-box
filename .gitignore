@@ -1,0 +1,26 @@
+# Gravações, resultados e estado local
+/entrada/
+/saida/
+/estado/
+/modelos/
+/logs/
+/tmp/
+
+# Credenciais e configuração privada
+.env
+.env.*
+!.env.example
+
+# Python e ferramentas
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Sistema e editor
+Thumbs.db
+.DS_Store
+.idea/
