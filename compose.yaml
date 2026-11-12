@@ -1,0 +1,73 @@
+name: whisper-box
+
+x-runtime: &runtime
+  image: whisper-box:local
+  pull_policy: never
+  init: true
+  network_mode: none
+  cpus: 0.5
+  mem_limit: 256m
+  pids_limit: 128
+  environment: &environment
+    HF_HUB_OFFLINE: "1"
+    WHISPER_BOX_STATE: /state
+    WHISPER_BOX_INPUT: /input
+    WHISPER_BOX_OUTPUT: /output
+    WHISPER_BOX_MODELS: /models
+    WHISPER_BOX_HOST_ROOT: ${WHISPER_BOX_HOST_ROOT:-}
+  volumes: &storage
+    - state:/state
+    - ./entrada:/input
+    - ./saida:/output
+    - ./modelos:/models:ro
+  logging:
+    driver: json-file
+    options:
+      max-size: 5m
+      max-file: "2"
+
+services:
+  worker:
+    <<: *runtime
+    build: .
+    command: [worker]
+    cpus: 2
+    mem_limit: 4g
+    memswap_limit: 4g
+    stop_grace_period: 20s
+    restart: "on-failure:3"
+    healthcheck:
+      test: [CMD, python, -m, whisper_box, health]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  cli:
+    <<: *runtime
+    profiles: [tools]
+    command: [--help]
+
+  prepare:
+    <<: *runtime
+    profiles: [setup]
+    network_mode: bridge
+    cpus: 1
+    mem_limit: 1g
+    environment:
+      <<: *environment
+      HF_HUB_OFFLINE: "0"
+    volumes:
+      - ./modelos:/models
+    command: [prepare]
+
+  test:
+    <<: *runtime
+    profiles: [test]
+    cpus: 2
+    mem_limit: 1g
+    volumes: []
+    entrypoint: [python, -m, unittest, discover, -s, tests, -v]
+
+volumes:
+  state:

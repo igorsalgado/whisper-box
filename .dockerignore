@@ -1,0 +1,10 @@
+# Allowlist: nenhum dado de reunião entra no build.
+**
+!Dockerfile
+!requirements.lock
+!src/
+!src/**
+!tests/
+!tests/**
+**/__pycache__/
+**/*.pyc
