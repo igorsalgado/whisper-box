@@ -1,8 +1,8 @@
 # A01 — Transcrição offline com Docker e integração com agentes
 
-Data: 12/11/2026  
-Estado: implementação autorizada em 12/11/2026; validação em andamento  
-Projeto: Whisper Box (`whisper-box`)  
+Data: 12/11/2026
+Estado: implementada e validada em 12/11/2026; evidências em ../VALIDACAO.md
+Projeto: Whisper Box (`whisper-box`)
 Destino pretendido: `igorsalgado/whisper-box` no GitHub
 
 ## 1. Problema e resultado esperado
@@ -214,22 +214,22 @@ Cada incremento terá validação correspondente. A integração com um sistema 
 
 ## 9. Critérios de aceite
 
-1. [ ] Após `prepare`, uma gravação real autorizada é transcrita com worker e CLI sem rede, sem downloads e sem credenciais externas.
-2. [ ] `submit` aceita caminho com espaços e caracteres acentuados, devolve identificador e não depende de Python no host.
-3. [ ] Arquivo inexistente, cópia alterada durante submissão, mídia inválida ou sem áudio produzem erro identificável, sem falso sucesso.
-4. [ ] MP3, WAV, M4A e MP4 com áudio produzem TXT, SRT, JSONL e metadados, validados por fixtures apropriadas.
-5. [ ] Uma entrada sem fala termina com sucesso e metadados indicando ausência de segmentos; uma mídia sem stream de áudio falha com motivo próprio.
-6. [ ] Duas gravações submetidas em sequência são processadas uma por vez, sem mistura de arquivos ou caminhos.
-7. [ ] Submissão duplicada com a mesma configuração e versões reutiliza o trabalho; outra configuração não reutiliza resultados incompatíveis.
-8. [ ] `wait` retorna um único JSON, usa os códigos previstos e respeita o tempo limite com tolerância operacional documentada. O tempo limite não cancela o trabalho.
-9. [ ] Encerrar o cliente de espera e consultar depois permite recuperar o resultado do mesmo trabalho.
-10. [ ] Interromper e reiniciar o worker recupera o trabalho conforme o limite de tentativas, sem publicar arquivos parciais como resultado final.
-11. [ ] Tentativa de iniciar um segundo worker sobre o mesmo estado é rejeitada claramente.
-12. [ ] `result` fornece caminhos acessíveis pelo Windows e recusa anunciar conclusão antes de todos os artefatos estarem disponíveis.
-13. [ ] Os limites de 2 CPUs/4 GiB são confirmados no Docker e uma gravação representativa de até duas horas é processada nesse perfil sem OOM. Se falhar, ajustar e documentar o perfil antes de concluir a A01.
-14. [ ] Um segundo trabalho na mesma execução reutiliza o modelo já carregado. Os metadados registram configurações, versões, duração da mídia e tempo de processamento.
-15. [ ] Um ensaio de integração inicia, submete, aguarda e recebe somente estado/caminhos, sem imprimir a transcrição no retorno dos comandos.
-16. [ ] A inspeção dos arquivos destinados ao Git e do contexto de build não encontra gravações reais, transcrições, modelos, estados, logs ou segredos.
+1. [x] Após `prepare`, uma gravação real autorizada é transcrita com worker e CLI sem rede, sem downloads e sem credenciais externas.
+2. [x] `submit` aceita caminho com espaços e caracteres acentuados, devolve identificador e não depende de Python no host.
+3. [x] Arquivo inexistente, cópia alterada durante submissão, mídia inválida ou sem áudio produzem erro identificável, sem falso sucesso.
+4. [x] MP3, WAV, M4A e MP4 com áudio produzem TXT, SRT, JSONL e metadados, validados por fixtures apropriadas.
+5. [x] Uma entrada sem fala termina com sucesso e metadados indicando ausência de segmentos; uma mídia sem stream de áudio falha com motivo próprio.
+6. [x] Duas gravações submetidas em sequência são processadas uma por vez, sem mistura de arquivos ou caminhos.
+7. [x] Submissão duplicada com a mesma configuração e versões reutiliza o trabalho; outra configuração não reutiliza resultados incompatíveis.
+8. [x] `wait` retorna um único JSON, usa os códigos previstos e respeita o tempo limite com tolerância operacional documentada. O tempo limite não cancela o trabalho.
+9. [x] Encerrar o cliente de espera e consultar depois permite recuperar o resultado do mesmo trabalho.
+10. [x] Interromper e reiniciar o worker recupera o trabalho conforme o limite de tentativas, sem publicar arquivos parciais como resultado final.
+11. [x] Tentativa de iniciar um segundo worker sobre o mesmo estado é rejeitada claramente.
+12. [x] `result` fornece caminhos acessíveis pelo Windows e recusa anunciar conclusão antes de todos os artefatos estarem disponíveis.
+13. [x] Os limites de 2 CPUs/4 GiB são confirmados no Docker e uma gravação representativa de até duas horas é processada nesse perfil sem OOM. Se falhar, ajustar e documentar o perfil antes de concluir a A01.
+14. [x] Um segundo trabalho na mesma execução reutiliza o modelo já carregado. Os metadados registram configurações, versões, duração da mídia e tempo de processamento.
+15. [x] Um ensaio de integração inicia, submete, aguarda e recebe somente estado/caminhos, sem imprimir a transcrição no retorno dos comandos.
+16. [x] A inspeção dos arquivos destinados ao Git e do contexto de build não encontra gravações reais, transcrições, modelos, estados, logs ou segredos.
 
 ## 10. Plano de validação e métricas
 
@@ -239,7 +239,7 @@ Cada incremento terá validação correspondente. A integração com um sistema 
 - Medição com gravação autorizada de até duas horas: duração, tempo de processamento, pico de memória observado e ocorrência de erros/OOM. Registrar a fonte e as limitações da medição.
 - Amostragem manual de trechos do começo, meio e fim para avaliar qualidade e correspondência dos horários; não exigir igualdade literal entre execuções do modelo.
 - Comparar o esforço operacional com o fluxo atual: nenhuma adaptação de script por reunião e nenhuma consulta de logs necessária ao agente no caminho de sucesso.
-- Resultado desta etapa documental: implementação, transcrição, consumo de recursos e integração externa ainda não testados.
+- Implementação, transcrição real e consumo de recursos validados; consultar docs/VALIDACAO.md. A integração com um sistema externo específico permanece fora do escopo.
 
 ## 11. Publicação no GitHub
 
