@@ -84,7 +84,7 @@ Relatórios brutos, fixtures e resultados permanecem em `logs/`, `entrada/` e `s
 
 ## Revisão de 19/11/2026 — wrapper Python multiplataforma
 
-O wrapper de host passou de PowerShell para `whisper-box.py` (Python 3.8+, somente biblioteca padrão). `whisper-box.ps1` virou um shim que localiza o Python e repassa argumentos, stdout, stderr e código de saída. `tests/smoke.ps1` foi substituído por `tests/smoke.py`. Pipeline, modelo, Compose e limites não mudaram; a versão do pipeline foi mantida.
+O wrapper de host passou de PowerShell para `whisper-box.py` (Python 3.8+, somente biblioteca padrão). Primeiro, `whisper-box.ps1` virou um shim que repassava tudo ao Python. Depois que o helper do agents-framework também foi migrado (`whisper/scripts/transcribe.py`), o shim foi removido; não há mais scripts PowerShell. `tests/smoke.ps1` foi substituído por `tests/smoke.py`. Pipeline, modelo, Compose e limites não mudaram; a versão do pipeline foi mantida.
 
 Ambiente: Windows 11, Python 3.12.6, Docker 29.8.1 e Compose v5.5.1.
 
@@ -94,9 +94,9 @@ Ambiente: Windows 11, Python 3.12.6, Docker 29.8.1 e Compose v5.5.1.
 | `start`, `submit`, `wait`, `result` por `whisper-box.py` | Aprovados com mídia sintética em caminho com espaços e acentos. |
 | Espera expirada | `wait --timeout 1` retornou código 2; o trabalho concluiu em seguida. |
 | Trabalho inexistente e comando desconhecido | Código 3 com JSON de erro. |
-| Shim `whisper-box.ps1` via `powershell -File` | Uma linha JSON em stdout, Docker em stderr, códigos preservados e deduplicação (`reused: true`). |
-| UTF-8 pelo shim | Mensagem `Worker indisponível` preservada com o worker parado. |
-| `transcribe.ps1` do agents-framework, sem alteração | Retomada por `-JobId` e submissão por `-InputPath` concluídas com código 0. |
+| Shim `whisper-box.ps1` (antes da remoção) | Uma linha JSON em stdout, Docker em stderr, códigos e UTF-8 preservados. |
+| Contrato do `transcribe.py` do agents-framework | 11 casos aprovados com backend simulado. |
+| `transcribe.py` com o Whisper Box real | Retomada por `--job` e submissão por `--input` concluídas com código 0 e os quatro artefatos. |
 
 O ensaio completo com gravação real (`tests/smoke.py`) e a execução em host Linux/macOS não foram repetidos nesta revisão. O comportamento POSIX está coberto por testes unitários do wrapper e do mapeamento de caminhos.
 

@@ -28,14 +28,37 @@ O Python do host executa apenas o wrapper `whisper-box.py`, que monta as chamada
 
 No Windows, use `py -3` ou `python`; em Linux/macOS, `python3`. Os exemplos abaixo usam `python`.
 
-## Instalação e uso
+## Instalação do zero
+
+### 1. Pré-requisitos por sistema
+
+| Sistema | Python 3.8+ | Docker |
+| --- | --- | --- |
+| Windows 10/11 | Instalador de [python.org](https://www.python.org/downloads/) ou `winget install Python.Python.3.12`. Use `py -3` ou `python`. | Docker Desktop com WSL 2 e containers Linux. |
+| Linux | Já incluso na maioria das distribuições (`python3`). | Docker Engine com o plugin Compose v2. Adicione o usuário ao grupo `docker` ou use `sudo`. |
+| macOS | `brew install python` ou instalador de python.org (`python3`). | Docker Desktop. |
+
+Confira antes de continuar:
+
+```bash
+python --version          # 3.8 ou superior (python3 em Linux/macOS)
+docker compose version    # Compose v2
+docker info               # engine em execução
+```
+
+### 2. Clonar e preparar (uma vez, com internet)
 
 ```bash
 git clone https://github.com/igorsalgado/whisper-box.git
 cd whisper-box
-
-# Uma vez, com internet: constrói a imagem e baixa/verifica o modelo.
 python whisper-box.py prepare
+```
+
+`prepare` constrói a imagem e baixa/verifica o modelo (aproximadamente 500 MB). A partir daí, tudo roda offline.
+
+### 3. Uso diário
+
+```bash
 
 # Inicia o worker em segundo plano e aguarda sua prontidão.
 python whisper-box.py start
@@ -49,17 +72,7 @@ python whisper-box.py wait --job "SEU_JOB_ID" --timeout 30
 python whisper-box.py result --job "SEU_JOB_ID"
 ```
 
-Em Linux/macOS, o arquivo também pode ser executado diretamente: `./whisper-box.py start`.
-
-### Compatibilidade com PowerShell
-
-`whisper-box.ps1` continua disponível para chamadores existentes no Windows. Ele apenas localiza o Python (`py -3`, `python` ou `python3`) e repassa argumentos, JSON em stdout, stderr e código de saída para `whisper-box.py`:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 start
-```
-
-Sem Python 3.8+ no `PATH`, o shim devolve `python_not_found` com código `1`. `-ExecutionPolicy Bypass` vale somente para o processo iniciado, sem alterar a política global.
+Em Linux/macOS, o arquivo também pode ser executado diretamente: `./whisper-box.py start`. O mesmo comando funciona em PowerShell, cmd, bash ou zsh; não há scripts específicos de shell.
 
 `prepare` preserva a revisão do modelo já instalada e verifica os hashes. Não precisa executá-lo por reunião. Para reconstruir somente o código, use `docker compose build worker` e depois `start`.
 
@@ -67,7 +80,7 @@ O projeto copia a gravação, detecta alterações durante a cópia e mantém o 
 
 ## Comandos
 
-Use `python whisper-box.py COMANDO` (ou o shim `whisper-box.ps1` no Windows).
+Use `python whisper-box.py COMANDO`.
 
 | Comando | Uso |
 | --- | --- |
@@ -127,7 +140,7 @@ if code != 0:
 print(response["files"])
 ```
 
-Chamadores PowerShell existentes podem continuar usando `whisper-box.ps1` com o mesmo contrato.
+O agente `whisper` do agents-framework já encapsula esse loop em `whisper/scripts/transcribe.py`.
 
 Cada `wait` admite de 1 a 60 segundos. O sistema define o prazo total. Fechar o terminal, desconectar o agente ou encerrar a espera não interrompe o worker. Uma consulta posterior usa o mesmo `job_id`.
 
@@ -203,7 +216,8 @@ Para atualizar código/dependências, pare o worker, reconstrua a imagem e execu
 | Sintoma | Ação |
 | --- | --- |
 | Docker indisponível | Abra o Docker Desktop ou inicie o serviço Docker e aguarde o engine Linux. |
-| `python_not_found` | Instale Python 3.8+ ou chame `whisper-box.py` com o interpretador desejado. |
+| `python` não encontrado | Instale Python 3.8+; no Windows, tente `py -3 whisper-box.py`. |
+| `permission denied` no socket do Docker (Linux) | Adicione o usuário ao grupo `docker` e abra nova sessão, ou use `sudo`. |
 | `model_not_ready` | Execute `prepare`. Se o modelo estiver corrompido, pare o worker e preserve/renomeie `modelos` antes de preparar novamente. |
 | `worker_unavailable` | Execute `start` e consulte `logs`. |
 | `wait` com código `2` | Repita com o mesmo identificador. |

@@ -2,7 +2,7 @@
 
 Data: 12/11/2026
 Estado: implementada e validada em 12/11/2026; evidências em ../VALIDACAO.md
-Revisão: 19/11/2026 — wrapper de host migrado de PowerShell para Python (`whisper-box.py`) para suportar Windows, Linux e macOS; `whisper-box.ps1` permanece como shim de compatibilidade.
+Revisão: 19/11/2026 — wrapper de host migrado de PowerShell para Python (`whisper-box.py`) para suportar Windows, Linux e macOS; o `whisper-box.ps1` foi removido no mesmo dia, após a migração do helper do agents-framework.
 Projeto: Whisper Box (`whisper-box`)
 Destino pretendido: `igorsalgado/whisper-box` no GitHub
 
@@ -47,7 +47,7 @@ Essas evidências orientam o projeto; não constituem validação de uma impleme
 
 - Imagem Docker reutilizável, dependências fixadas e Docker Compose próprio.
 - Preparação explícita do modelo, separada da execução offline.
-- Interface de host fina. Originalmente em PowerShell; desde 19/11/2026 em Python 3.8+ somente com biblioteca padrão (`whisper-box.py`), com `whisper-box.ps1` como shim de compatibilidade.
+- Interface de host fina. Originalmente em PowerShell; desde 19/11/2026 em Python 3.8+ somente com biblioteca padrão (`whisper-box.py`), sem scripts PowerShell.
 - Submissão explícita de arquivo, fila persistente, consulta de estado, espera e consulta de resultado.
 - Worker independente do agente, com modelo carregado uma vez durante sua execução e reutilizado entre trabalhos.
 - Processamento sequencial com proteção contra execução simultânea por mais de um worker sobre o mesmo estado.
@@ -94,7 +94,6 @@ whisper-box/
 ├── requirements.lock
 ├── .dockerignore
 ├── whisper-box.py    # wrapper multiplataforma
-├── whisper-box.ps1   # shim de compatibilidade
 ├── src/
 ├── tests/
 ├── docs/actions/
@@ -135,8 +134,6 @@ python whisper-box.py status --job "<job_id>"
 # Obtém o manifesto de saída de um trabalho concluído
 python whisper-box.py result --job "<job_id>"
 ```
-
-`.\whisper-box.ps1 COMANDO` continua aceito no Windows com o mesmo contrato.
 
 ### Regras da interface
 
