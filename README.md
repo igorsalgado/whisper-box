@@ -17,6 +17,14 @@ Usuário/agente → submit → fila SQLite → worker Docker → saida/<job_id>/
 Usuário/agente → wait/result → estado e caminhos dos arquivos
 ```
 
+## Usar com um agente
+
+Peça ao seu agente de código (Claude Code, Codex ou similar):
+
+> Clone https://github.com/igorsalgado/whisper-box, siga o AGENTS.md e transcreva uma gravação minha.
+
+O agente lê o [AGENTS.md](AGENTS.md) (o Claude Code o carrega via `CLAUDE.md`), roda `python whisper-box.py doctor`, instala ou prepara o que faltar pedindo sua permissão, pergunta qual arquivo transcrever e executa `python whisper-box.py transcribe --input CAMINHO`. Você recebe os caminhos do TXT, SRT, JSONL e metadados.
+
 ## Pré-requisitos
 
 - Windows, Linux ou macOS com **Python 3.8+** no host (somente biblioteca padrão, sem `pip install`).
@@ -38,7 +46,7 @@ No Windows, use `py -3` ou `python`; em Linux/macOS, `python3`. Os exemplos abai
 | Linux | Já incluso na maioria das distribuições (`python3`). | Docker Engine com o plugin Compose v2. Adicione o usuário ao grupo `docker` ou use `sudo`. |
 | macOS | `brew install python` ou instalador de python.org (`python3`). | Docker Desktop. |
 
-Confira antes de continuar:
+Confira antes de continuar (depois de clonar, `python whisper-box.py doctor` faz essa verificação e indica o próximo passo em JSON):
 
 ```bash
 python --version          # 3.8 ou superior (python3 em Linux/macOS)
@@ -59,18 +67,15 @@ python whisper-box.py prepare
 ### 3. Uso diário
 
 ```bash
+# Um comando: inicia o worker, submete, aguarda e devolve os caminhos.
+python whisper-box.py transcribe --input "/home/voce/Reunioes/gravacao.mp4"   # Linux/macOS
+python whisper-box.py transcribe --input "C:\Reunioes\gravacao.mp4"           # Windows
 
-# Inicia o worker em segundo plano e aguarda sua prontidão.
-python whisper-box.py start
-
-# Devolve um job_id; aguarde o arquivo terminar de gravar antes de submeter.
-python whisper-box.py submit --input "/home/voce/Reunioes/gravacao.mp4"   # Linux/macOS
-python whisper-box.py submit --input "C:\Reunioes\gravacao.mp4"           # Windows
-
-# Substitua pelo identificador recebido.
-python whisper-box.py wait --job "SEU_JOB_ID" --timeout 30
-python whisper-box.py result --job "SEU_JOB_ID"
+# Se a execução for interrompida, retome pelo job_id (impresso em stderr).
+python whisper-box.py transcribe --job "SEU_JOB_ID"
 ```
+
+Aguarde o arquivo terminar de gravar antes de transcrever. Os passos individuais (`start`, `submit`, `wait`, `result`) continuam disponíveis; veja [Comandos](#comandos).
 
 Em Linux/macOS, o arquivo também pode ser executado diretamente: `./whisper-box.py start`. O mesmo comando funciona em PowerShell, cmd, bash ou zsh; não há scripts específicos de shell.
 
@@ -84,6 +89,9 @@ Use `python whisper-box.py COMANDO`.
 
 | Comando | Uso |
 | --- | --- |
+| `doctor` | Verifica Python, Docker, Compose, engine, imagem e modelo; indica um `next_step` em JSON. |
+| `transcribe --input CAMINHO` | Fluxo completo: start, submit, espera renovada e resultado verificado. Aceita `--language` e `--timeout-seconds` (padrão 7200). |
+| `transcribe --job ID` | Retoma o acompanhamento de um trabalho existente, sem submeter de novo. |
 | `prepare` | Constrói a imagem e prepara/verifica o modelo, com internet. |
 | `start` | Inicia o worker offline; pode ser repetido. |
 | `stop` | Para o worker, preservando fila, modelo e arquivos. |
@@ -100,9 +108,9 @@ Estados: `queued`, `running`, `succeeded` e `failed`. Os horários de eventos s�
 
 | Código | Significado |
 | --- | --- |
-| `0` | Comando atendido; em `wait`/`result`, trabalho concluído com sucesso. |
-| `1` | Falha no trabalho ou na operação. |
-| `2` | A espera atingiu o tempo limite; o trabalho continua. |
+| `0` | Comando atendido; em `wait`/`result`/`transcribe`, trabalho concluído com sucesso; em `doctor`, ambiente pronto. |
+| `1` | Falha no trabalho ou na operação; em `doctor`, há um `next_step` pendente. |
+| `2` | A espera (ou o orçamento de `transcribe`) atingiu o tempo limite; o trabalho continua. |
 | `3` | Argumento inválido ou trabalho inexistente. |
 | `4` | `result` solicitado enquanto o trabalho ainda está pendente/em execução. |
 
@@ -110,41 +118,16 @@ Estados: `queued`, `running`, `succeeded` e `failed`. Os horários de eventos s�
 
 ## Integração com agentes
 
-O agente executa o projeto e recebe o resultado. Não precisa escrever código de transcrição ou acompanhar segmentos. O loop abaixo deve rodar em código no sistema associado ao agente, em qualquer sistema operacional:
+O roteiro completo para agentes (instalação, diagnóstico, pergunta ao usuário, erros e resposta) está no [AGENTS.md](AGENTS.md). Em resumo:
 
-```python
-import json
-import subprocess
-import sys
-
-RUNNER = "/caminho/para/whisper-box/whisper-box.py"
-
-
-def box(*arguments):
-    # stderr fica separado: stdout contém somente o JSON.
-    completed = subprocess.run([sys.executable, RUNNER, *arguments], stdout=subprocess.PIPE,
-                               text=True, encoding="utf-8")
-    return completed.returncode, json.loads(completed.stdout)
-
-
-code, submission = box("submit", "--input", "/home/voce/Reunioes/gravacao.mp4")
-if code != 0:
-    raise RuntimeError(submission)
-
-while True:
-    code, response = box("wait", "--job", submission["job_id"], "--timeout", "30")
-    if code != 2:
-        break
-if code != 0:
-    raise RuntimeError(response)
-print(response["files"])
+```bash
+python whisper-box.py doctor                      # repetir até "ready": true
+python whisper-box.py transcribe --input CAMINHO  # um JSON final em stdout
 ```
 
-O agente `whisper` do agents-framework já encapsula esse loop em `whisper/scripts/transcribe.py`.
+`transcribe` renova `wait` internamente em janelas de até 30 segundos, dentro de `--timeout-seconds`. Sistemas que preferem controlar a espera podem usar `submit` e repetir `wait --job ID --timeout 30` enquanto o código de saída for `2`. Cada `wait` admite de 1 a 60 segundos. Fechar o terminal, desconectar o agente ou encerrar a espera não interrompe o worker. Uma consulta posterior usa o mesmo `job_id`.
 
-Cada `wait` admite de 1 a 60 segundos. O sistema define o prazo total. Fechar o terminal, desconectar o agente ou encerrar a espera não interrompe o worker. Uma consulta posterior usa o mesmo `job_id`.
-
-`submit`, `status`, `wait` e `result` escrevem um objeto JSON em stdout. Mensagens operacionais do Docker ficam em stderr: capture os canais separadamente, sem `2>&1` ao interpretar o JSON.
+`doctor`, `transcribe`, `submit`, `status`, `wait` e `result` escrevem um objeto JSON em stdout. Mensagens operacionais do Docker ficam em stderr: capture os canais separadamente, sem `2>&1` ao interpretar o JSON.
 
 Exemplo abreviado de conclusão no Windows. Os caminhos em `files` seguem o formato do host que executou o wrapper; em Linux/macOS aparecem como `/home/.../saida/...`.
 

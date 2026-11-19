@@ -98,7 +98,16 @@ Ambiente: Windows 11, Python 3.12.6, Docker 29.8.1 e Compose v5.5.1.
 | Contrato do `transcribe.py` do agents-framework | 11 casos aprovados com backend simulado. |
 | `transcribe.py` com o Whisper Box real | Retomada por `--job` e submissão por `--input` concluídas com código 0 e os quatro artefatos. |
 
-O ensaio completo com gravação real (`tests/smoke.py`) e a execução em host Linux/macOS não foram repetidos nesta revisão. O comportamento POSIX está coberto por testes unitários do wrapper e do mapeamento de caminhos.
+Na mesma data, foram adicionados os comandos para agentes `doctor` (diagnóstico com um `next_step`) e `transcribe` (fluxo completo em um comando), além do roteiro em `AGENTS.md`:
+
+| Verificação | Resultado |
+| --- | --- |
+| Testes do wrapper | **17 aprovados**, incluindo 4 de `doctor` e 5 de `transcribe` com Docker simulado. |
+| `doctor` no ambiente real | `ready: true`, `platform: windows`, `next_step: ask_for_recording`, código 0. |
+| `transcribe --input` com mídia sintética e caminho acentuado | `succeeded` com os quatro artefatos, código 0 e evento `whisper_waiting` em stderr. |
+| `transcribe --job` inexistente / arquivo ausente | Código 3 com `job_not_found` / `input_not_found`. |
+
+Os caminhos `install_docker`, `start_docker` e `prepare` do `doctor` foram validados somente com testes simulados. O ensaio completo com gravação real (`tests/smoke.py`) e a execução em host Linux/macOS não foram repetidos nesta revisão. O comportamento POSIX está coberto por testes unitários do wrapper e do mapeamento de caminhos.
 
 ## Limites desta validação
 
