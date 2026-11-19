@@ -2,7 +2,8 @@
 
 ## Uso operacional
 
-- A transcrição pertence ao programa. Use `whisper-box.ps1`; não gere um script por reunião.
+- A transcrição pertence ao programa. Use `whisper-box.py` (Windows, Linux ou macOS); não gere um script por reunião.
+- `whisper-box.ps1` é somente um shim de compatibilidade para chamadores PowerShell; não adicione lógica a ele.
 - Após a preparação inicial, execute `start`, `submit --input CAMINHO`, `wait --job ID --timeout 30` e `result --job ID`.
 - Coloque a renovação de `wait` em um loop de código do sistema associado. Código de saída `2` significa que a espera expirou e o trabalho continua.
 - Capture stdout como JSON e stderr como diagnóstico. Não misture os canais.
@@ -12,10 +13,11 @@
 
 ## Desenvolvimento
 
-- Todo runtime e teste Python roda em Docker; não exigir instalação no Windows.
+- Todo runtime de transcrição e a suíte rodam em Docker. O host exige apenas Python 3.8+ para o wrapper.
+- `whisper-box.py` usa somente a biblioteca padrão; não adicione dependências instaladas no host.
 - Preserve `network_mode: none` no worker e na CLI, o worker exclusivo e os limites de recursos.
 - Uma alteração de inferência exige rever a versão do pipeline e a deduplicação.
-- Valide a suíte e o contrato PowerShell quando alterar os comandos.
+- Valide a suíte (inclui `tests/test_wrapper.py`), o wrapper Python e o shim PowerShell quando alterar os comandos.
 - Leia [README.md](README.md), a [action A01](docs/actions/A01-transcricao-offline-docker.md) e o [relatório de validação](docs/VALIDACAO.md).
 
 ## Dados e Git

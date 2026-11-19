@@ -2,6 +2,7 @@
 
 Data: 12/11/2026
 Estado: implementada e validada em 12/11/2026; evidências em ../VALIDACAO.md
+Revisão: 19/11/2026 — wrapper de host migrado de PowerShell para Python (`whisper-box.py`) para suportar Windows, Linux e macOS; `whisper-box.ps1` permanece como shim de compatibilidade.
 Projeto: Whisper Box (`whisper-box`)
 Destino pretendido: `igorsalgado/whisper-box` no GitHub
 
@@ -35,7 +36,7 @@ Essas evidências orientam o projeto; não constituem validação de uma impleme
 
 ### Premissas para o primeiro incremento
 
-- Ambiente inicial: Windows com PowerShell e Docker Desktop em modo de containers Linux.
+- Ambiente inicial: Windows com PowerShell e Docker Desktop em modo de containers Linux. Desde a revisão de 19/11/2026, o wrapper é Python e o host pode ser Windows, Linux ou macOS.
 - Projeto utilizável por qualquer reunião, independentemente do repositório ou sistema do agente.
 - Perfil inicial: CPU, modelo `small`, `int8`, português e um trabalho de transcrição por vez.
 - Limites iniciais do worker: 2 CPUs e 4 GiB de memória; adequação depende de medição.
@@ -46,7 +47,7 @@ Essas evidências orientam o projeto; não constituem validação de uma impleme
 
 - Imagem Docker reutilizável, dependências fixadas e Docker Compose próprio.
 - Preparação explícita do modelo, separada da execução offline.
-- Interface PowerShell fina, sem necessidade de Python instalado no Windows.
+- Interface de host fina. Originalmente em PowerShell; desde 19/11/2026 em Python 3.8+ somente com biblioteca padrão (`whisper-box.py`), com `whisper-box.ps1` como shim de compatibilidade.
 - Submissão explícita de arquivo, fila persistente, consulta de estado, espera e consulta de resultado.
 - Worker independente do agente, com modelo carregado uma vez durante sua execução e reutilizado entre trabalhos.
 - Processamento sequencial com proteção contra execução simultânea por mais de um worker sobre o mesmo estado.
@@ -69,7 +70,7 @@ Essas evidências orientam o projeto; não constituem validação de uma impleme
 ```text
 Sistema/agente ou usuário
           │
-          │ whisper-box.ps1: submit / status / wait / result
+          │ whisper-box.py: submit / status / wait / result
           ▼
 CLI executada em container auxiliar sem rede
           │
@@ -92,7 +93,8 @@ whisper-box/
 ├── compose.yaml
 ├── requirements.lock
 ├── .dockerignore
-├── whisper-box.ps1
+├── whisper-box.py    # wrapper multiplataforma
+├── whisper-box.ps1   # shim de compatibilidade
 ├── src/
 ├── tests/
 ├── docs/actions/
@@ -104,7 +106,7 @@ whisper-box/
 
 - A CLI e o worker compartilham o contrato de armazenamento, sem precisar de servidor HTTP.
 - SQLite fica em volume Docker local, não em pasta de rede nem em bind mount do Windows. A CLI acessa o banco pelo container auxiliar; o host não precisa abri-lo.
-- Entrada, saída e modelos usam armazenamento persistente. As saídas devem ser acessíveis pelo Windows.
+- Entrada, saída e modelos usam armazenamento persistente. As saídas devem ser acessíveis pelo host (Windows, Linux ou macOS).
 - O host fornece arquivos por bind mount com caminho tratado como dado, nunca como comando de shell. Montar somente o arquivo ou a pasta necessários.
 - A submissão copia o arquivo para uma entrada própria. O trabalho só entra na fila após a cópia completa e a publicação atômica do arquivo. O chamador deve fornecer uma gravação cuja escrita já terminou; detectar alteração durante a cópia e rejeitar a submissão.
 - CLI e worker usam transações curtas, espera limitada para bloqueios do SQLite e atualização atômica de estados. `wait` não mantém uma transação aberta durante a espera.
@@ -114,35 +116,37 @@ whisper-box/
 
 Os comandos abaixo definem a interface de implementação. Serão executados a partir da raiz do projeto.
 
-```powershell
+```bash
 # Preparação inicial com internet: imagem, dependências e modelo
-.\whisper-box.ps1 prepare
+python whisper-box.py prepare
 
 # Inicia o worker em segundo plano; pode ser repetido com segurança
-.\whisper-box.ps1 start
+python whisper-box.py start
 
 # Submete uma gravação e retorna um identificador
-.\whisper-box.ps1 submit --input "C:\Reunioes\call.mp4"
+python whisper-box.py submit --input "C:\Reunioes\call.mp4"
 
 # Espera por até 30 segundos; pode ser repetido pelo mesmo trabalho
-.\whisper-box.ps1 wait --job "<job_id>" --timeout 30
+python whisper-box.py wait --job "<job_id>" --timeout 30
 
 # Consulta curta, sem abrir os arquivos da transcrição
-.\whisper-box.ps1 status --job "<job_id>"
+python whisper-box.py status --job "<job_id>"
 
 # Obtém o manifesto de saída de um trabalho concluído
-.\whisper-box.ps1 result --job "<job_id>"
+python whisper-box.py result --job "<job_id>"
 ```
+
+`.\whisper-box.ps1 COMANDO` continua aceito no Windows com o mesmo contrato.
 
 ### Regras da interface
 
 - `submit`, `status`, `wait` e `result` escrevem somente um objeto JSON em stdout. Diagnósticos de execução ficam em stderr e nos registros locais.
-- O wrapper deve preservar os códigos de saída do projeto e funcionar sem instalações ou políticas globais adicionais no host, além dos pré-requisitos documentados.
+- O wrapper deve preservar os códigos de saída do projeto e funcionar sem instalações ou políticas globais adicionais no host, além dos pré-requisitos documentados (Docker e Python 3.8+ sem pacotes extras).
 - `submit` devolve `job_id`, estado e `reused`. `status` devolve estado e progresso disponível, sem conteúdo da reunião.
 - `wait` bloqueia dentro do comando, sem usar um modelo de linguagem. Emite um único JSON ao terminar ou atingir o tempo limite; não transmite segmentos nem logs continuamente.
 - `wait` admite de 1 a 60 segundos, com padrão de 30. O sistema associado pode renovar a espera conforme sua própria política.
 - Tempo limite de espera não cancela nem reinicia o trabalho. Uma nova chamada usa o mesmo `job_id`.
-- Em sucesso, a resposta informa os caminhos absolutos dos arquivos no Windows, relativos à configuração local do projeto, e os caminhos relativos portáveis.
+- Em sucesso, a resposta informa os caminhos absolutos dos arquivos no formato do host (Windows ou POSIX), relativos à configuração local do projeto, e os caminhos relativos portáveis.
 - O agente pode entregar esses caminhos ao sistema sem carregar a transcrição na conversa. Ler a transcrição para outra finalidade é uma etapa explícita posterior.
 - Antes da preparação ou com Docker/worker indisponível, devolver erro estruturado e orientação curta. Não instalar, baixar ou trocar o modelo silenciosamente.
 

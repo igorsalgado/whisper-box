@@ -19,34 +19,47 @@ Usuário/agente → wait/result → estado e caminhos dos arquivos
 
 ## Pré-requisitos
 
-- Windows com PowerShell 5.1 ou superior.
-- Docker Desktop com containers Linux e Compose v2 com suporte a `up --wait`.
+- Windows, Linux ou macOS com **Python 3.8+** no host (somente biblioteca padrão, sem `pip install`).
+- Docker com engine Linux (Docker Desktop ou Docker Engine) e Compose v2 com suporte a `up --wait`.
 - Internet na preparação inicial para imagem, dependências e modelo.
 - Espaço para a imagem, aproximadamente 500 MB de modelo e cópias das gravações.
 
-Não precisa instalar Python ou FFmpeg no Windows, nem ter GPU. O áudio é decodificado com PyAV no container. Os limites do worker não incluem o consumo dos outros serviços do Docker Desktop.
+O Python do host executa apenas o wrapper `whisper-box.py`, que monta as chamadas ao Docker Compose. Bibliotecas de transcrição, FFmpeg/PyAV e o modelo ficam no container; não há GPU nem dependências extras no host. Os limites do worker não incluem o consumo dos outros serviços do Docker.
+
+No Windows, use `py -3` ou `python`; em Linux/macOS, `python3`. Os exemplos abaixo usam `python`.
 
 ## Instalação e uso
 
-```powershell
+```bash
 git clone https://github.com/igorsalgado/whisper-box.git
 cd whisper-box
 
 # Uma vez, com internet: constrói a imagem e baixa/verifica o modelo.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 prepare
+python whisper-box.py prepare
 
 # Inicia o worker em segundo plano e aguarda sua prontidão.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 start
+python whisper-box.py start
 
 # Devolve um job_id; aguarde o arquivo terminar de gravar antes de submeter.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 submit --input "C:\Reunioes\gravacao.mp4"
+python whisper-box.py submit --input "/home/voce/Reunioes/gravacao.mp4"   # Linux/macOS
+python whisper-box.py submit --input "C:\Reunioes\gravacao.mp4"           # Windows
 
 # Substitua pelo identificador recebido.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 wait --job "SEU_JOB_ID" --timeout 30
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 result --job "SEU_JOB_ID"
+python whisper-box.py wait --job "SEU_JOB_ID" --timeout 30
+python whisper-box.py result --job "SEU_JOB_ID"
 ```
 
-`-ExecutionPolicy Bypass` vale somente para o processo iniciado, sem alterar a política global. Se sua política permite scripts locais, pode executar `./whisper-box.ps1` diretamente. Sistemas gerenciados podem impor restrições adicionais.
+Em Linux/macOS, o arquivo também pode ser executado diretamente: `./whisper-box.py start`.
+
+### Compatibilidade com PowerShell
+
+`whisper-box.ps1` continua disponível para chamadores existentes no Windows. Ele apenas localiza o Python (`py -3`, `python` ou `python3`) e repassa argumentos, JSON em stdout, stderr e código de saída para `whisper-box.py`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 start
+```
+
+Sem Python 3.8+ no `PATH`, o shim devolve `python_not_found` com código `1`. `-ExecutionPolicy Bypass` vale somente para o processo iniciado, sem alterar a política global.
 
 `prepare` preserva a revisão do modelo já instalada e verifica os hashes. Não precisa executá-lo por reunião. Para reconstruir somente o código, use `docker compose build worker` e depois `start`.
 
@@ -54,7 +67,7 @@ O projeto copia a gravação, detecta alterações durante a cópia e mantém o 
 
 ## Comandos
 
-Use `./whisper-box.ps1` ou o prefixo completo do PowerShell acima.
+Use `python whisper-box.py COMANDO` (ou o shim `whisper-box.ps1` no Windows).
 
 | Comando | Uso |
 | --- | --- |
@@ -84,29 +97,43 @@ Estados: `queued`, `running`, `succeeded` e `failed`. Os horários de eventos s�
 
 ## Integração com agentes
 
-O agente executa o projeto e recebe o resultado. Não precisa escrever Python ou acompanhar segmentos. O loop abaixo deve rodar em código no sistema associado ao agente:
+O agente executa o projeto e recebe o resultado. Não precisa escrever código de transcrição ou acompanhar segmentos. O loop abaixo deve rodar em código no sistema associado ao agente, em qualquer sistema operacional:
 
-```powershell
-$runner = Join-Path (Get-Location).Path 'whisper-box.ps1'
-$submission = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner submit --input 'C:\Reunioes\gravacao.mp4'
-if ($LASTEXITCODE -ne 0) { throw 'Falha ao submeter a gravacao.' }
-$job = $submission | ConvertFrom-Json
+```python
+import json
+import subprocess
+import sys
 
-do {
-    $response = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner wait --job $job.job_id --timeout 30
-    $waitCode = $LASTEXITCODE
-    if ($waitCode -notin 0, 2) { throw $response }
-} while ($waitCode -eq 2)
+RUNNER = "/caminho/para/whisper-box/whisper-box.py"
 
-$result = $response | ConvertFrom-Json
-$result.files
+
+def box(*arguments):
+    # stderr fica separado: stdout contém somente o JSON.
+    completed = subprocess.run([sys.executable, RUNNER, *arguments], stdout=subprocess.PIPE,
+                               text=True, encoding="utf-8")
+    return completed.returncode, json.loads(completed.stdout)
+
+
+code, submission = box("submit", "--input", "/home/voce/Reunioes/gravacao.mp4")
+if code != 0:
+    raise RuntimeError(submission)
+
+while True:
+    code, response = box("wait", "--job", submission["job_id"], "--timeout", "30")
+    if code != 2:
+        break
+if code != 0:
+    raise RuntimeError(response)
+print(response["files"])
 ```
+
+Chamadores PowerShell existentes podem continuar usando `whisper-box.ps1` com o mesmo contrato.
 
 Cada `wait` admite de 1 a 60 segundos. O sistema define o prazo total. Fechar o terminal, desconectar o agente ou encerrar a espera não interrompe o worker. Uma consulta posterior usa o mesmo `job_id`.
 
 `submit`, `status`, `wait` e `result` escrevem um objeto JSON em stdout. Mensagens operacionais do Docker ficam em stderr: capture os canais separadamente, sem `2>&1` ao interpretar o JSON.
 
-Exemplo abreviado de conclusão:
+Exemplo abreviado de conclusão no Windows. Os caminhos em `files` seguem o formato do host que executou o wrapper; em Linux/macOS aparecem como `/home/.../saida/...`.
 
 ```json
 {
@@ -157,15 +184,15 @@ Os dados seguem as permissões locais do computador e do Docker. O projeto não 
 
 ## Testes e desenvolvimento
 
-```powershell
+```bash
 docker compose build worker
 docker compose --profile test run --rm --no-deps -T test
 
 # Ensaio pelo wrapper com modelo preparado e mídia fornecida explicitamente.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke.ps1 --input "C:\Reunioes\gravacao.mp4"
+python tests/smoke.py --input "/home/voce/Reunioes/gravacao.mp4"
 ```
 
-A suíte automatizada roda sem rede e sem carregar o modelo. O ensaio completo valida também a gravação fornecida, formatos de mídia e silêncio sintético de duas horas. Fixtures e relatório ficam em `logs/`, fora do Git.
+A suíte automatizada roda sem rede e sem carregar o modelo, incluindo os testes do wrapper (`tests/test_wrapper.py`), que simulam o Docker. Eles também rodam no host com `python -m unittest tests.test_wrapper`. O ensaio completo valida também a gravação fornecida, formatos de mídia e silêncio sintético de duas horas. Fixtures e relatório ficam em `logs/`, fora do Git.
 
 Resultados medidos: [docs/VALIDACAO.md](docs/VALIDACAO.md). Contrato: [action A01](docs/actions/A01-transcricao-offline-docker.md).
 
@@ -175,7 +202,8 @@ Para atualizar código/dependências, pare o worker, reconstrua a imagem e execu
 
 | Sintoma | Ação |
 | --- | --- |
-| Docker indisponível | Abra Docker Desktop e aguarde o engine Linux. |
+| Docker indisponível | Abra o Docker Desktop ou inicie o serviço Docker e aguarde o engine Linux. |
+| `python_not_found` | Instale Python 3.8+ ou chame `whisper-box.py` com o interpretador desejado. |
 | `model_not_ready` | Execute `prepare`. Se o modelo estiver corrompido, pare o worker e preserve/renomeie `modelos` antes de preparar novamente. |
 | `worker_unavailable` | Execute `start` e consulte `logs`. |
 | `wait` com código `2` | Repita com o mesmo identificador. |
@@ -185,7 +213,8 @@ Para atualizar código/dependências, pare o worker, reconstrua a imagem e execu
 
 ## Limitações
 
-- Ambiente inicial: Windows/PowerShell com Docker Linux amd64. Outros hosts precisam de validação do wrapper e do mapeamento de caminhos.
+- Validado em Windows com Docker Linux amd64. Linux e macOS são suportados pelo wrapper Python e por testes de caminhos POSIX, mas ainda não têm ensaio completo registrado; ARM não foi testado.
+- Em Linux, arquivos criados pelo container em `entrada/` e `saida/` pertencem ao `root`: são legíveis pelo usuário, mas a remoção manual pode exigir `sudo`.
 - Sem captura ao vivo, identificação de falantes, interface web ou resumo automático.
 - Fronteiras de cinco minutos podem dividir palavras; revise esses trechos quando necessário.
 - Silêncio gera texto/legenda vazios e `no_speech: true`; mídia sem stream de áudio falha.

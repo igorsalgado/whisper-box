@@ -41,7 +41,7 @@ Os horários e três amostras do texto, no começo, meio e fim, foram inspeciona
 
 ## Formatos e duração longa
 
-Casos do ensaio automatizado `tests/smoke.ps1`:
+Casos do ensaio automatizado (executado em 12/11/2026 com `tests/smoke.ps1`, hoje substituído por `tests/smoke.py`):
 
 | Caso | Duração decodificada | Processamento | Resultado |
 | --- | --- | --- | --- |
@@ -71,16 +71,34 @@ Os containers auxiliares usam a mesma configuração de rede `none` no Compose. 
 
 ## Comandos para reproduzir
 
-```powershell
+```bash
 docker compose build worker
 docker compose --profile test run --rm --no-deps -T test
-powershell -NoProfile -ExecutionPolicy Bypass -File .\whisper-box.ps1 prepare
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\smoke.ps1 --input "C:\Reunioes\gravacao.mp4"
+python whisper-box.py prepare
+python tests/smoke.py --input "C:\Reunioes\gravacao.mp4"
 ```
 
 Para repetir o ensaio de recuperação, submeta uma mídia ainda não processada, consulte `result` enquanto estiver em execução, execute `wait --timeout 1`, pare e inicie o worker e aguarde o mesmo identificador. Os metadados devem registrar a tentativa 2 e uma interrupção. A política de três tentativas também é coberta pela suíte automatizada.
 
 Relatórios brutos, fixtures e resultados permanecem em `logs/`, `entrada/` e `saida/`, ignorados pelo Git. Nenhuma fala, gravação ou transcrição real está incluída neste relatório.
+
+## Revisão de 19/11/2026 — wrapper Python multiplataforma
+
+O wrapper de host passou de PowerShell para `whisper-box.py` (Python 3.8+, somente biblioteca padrão). `whisper-box.ps1` virou um shim que localiza o Python e repassa argumentos, stdout, stderr e código de saída. `tests/smoke.ps1` foi substituído por `tests/smoke.py`. Pipeline, modelo, Compose e limites não mudaram; a versão do pipeline foi mantida.
+
+Ambiente: Windows 11, Python 3.12.6, Docker 29.8.1 e Compose v5.5.1.
+
+| Verificação | Resultado |
+| --- | --- |
+| Suíte no Docker sem rede | **27 testes aprovados**: 18 anteriores, 1 de caminhos POSIX e 8 do wrapper. |
+| `start`, `submit`, `wait`, `result` por `whisper-box.py` | Aprovados com mídia sintética em caminho com espaços e acentos. |
+| Espera expirada | `wait --timeout 1` retornou código 2; o trabalho concluiu em seguida. |
+| Trabalho inexistente e comando desconhecido | Código 3 com JSON de erro. |
+| Shim `whisper-box.ps1` via `powershell -File` | Uma linha JSON em stdout, Docker em stderr, códigos preservados e deduplicação (`reused: true`). |
+| UTF-8 pelo shim | Mensagem `Worker indisponível` preservada com o worker parado. |
+| `transcribe.ps1` do agents-framework, sem alteração | Retomada por `-JobId` e submissão por `-InputPath` concluídas com código 0. |
+
+O ensaio completo com gravação real (`tests/smoke.py`) e a execução em host Linux/macOS não foram repetidos nesta revisão. O comportamento POSIX está coberto por testes unitários do wrapper e do mapeamento de caminhos.
 
 ## Limites desta validação
 
