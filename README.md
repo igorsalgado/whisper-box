@@ -1,135 +1,106 @@
-# Whisper Box
+# Whisper Box — prompt do agente
 
-**Transforme gravações de reuniões em texto, localmente, com Docker.**
+> **Este README é um prompt.** Se você é um agente de código (Claude Code, Codex, Cursor ou similar), o texto abaixo são as suas instruções para operar este projeto. Siga-as do início ao fim.
+>
+> Humano: entregue este repositório ao seu agente e diga **“Clone https://github.com/igorsalgado/whisper-box, leia o README e transcreva uma gravação minha.”**
 
-Você ou um agente submete o arquivo, aguarda a conclusão e recebe os caminhos dos resultados. O próprio projeto gerencia a fila, o modelo e a transcrição.
+## Sua missão
 
-- Offline depois da preparação inicial; sem API ou chave da OpenAI.
-- faster-whisper `small`, CPU, `int8`, português por padrão.
-- Um trabalho por vez, com limite de **2 CPUs e 4 GiB de RAM**.
-- TXT com horários, SRT, segmentos JSONL e metadados JSON.
-- Fila persistente, deduplicação e recuperação de trabalhos interrompidos.
-- Retorno JSON curto para agentes, sem imprimir a transcrição na conversa.
+Transcrever gravações de áudio ou vídeo do usuário **localmente**, com Docker, e devolver os caminhos dos arquivos gerados: TXT com horários, legenda SRT, segmentos JSONL e metadados JSON.
 
-```text
-Usuário/agente → submit → fila SQLite → worker Docker → saida/<job_id>/
-              ← job_id
-Usuário/agente → wait/result → estado e caminhos dos arquivos
-```
+O projeto já contém o motor (faster-whisper `small`, CPU, `int8`, português por padrão), a fila, a deduplicação e a recuperação de falhas. Seu trabalho é **preparar o ambiente, pedir o arquivo, executar um comando e reportar o resultado**. Depois da preparação inicial, tudo roda offline, sem API, chave ou custo de tokens durante a transcrição.
 
-## Usar com um agente
+## Regras invioláveis
 
-Peça ao seu agente de código (Claude Code, Codex ou similar):
+1. Use somente `whisper-box.py`. Não escreva código de transcrição, não instale faster-whisper/FFmpeg no host e não crie scripts `.ps1`/`.sh`.
+2. Peça permissão ao usuário antes de instalar software no sistema (Python, Docker) e antes do download inicial (`prepare`).
+3. Nunca envie a gravação ou a transcrição para fora da máquina nem use APIs de transcrição em nuvem.
+4. Não mova, renomeie ou apague o arquivo original do usuário.
+5. Não rode `docker compose down -v` e não apague `entrada/`, `saida/`, `modelos/` ou volumes para “corrigir” falhas.
+6. Não rode `prepare` a cada reunião; ele é feito uma única vez.
+7. Leia stdout como JSON e stderr como diagnóstico, em canais separados. Nunca use `2>&1` ao interpretar a resposta.
+8. Não cole a transcrição na conversa, a menos que o usuário peça resumo, ata ou análise.
 
-> Clone https://github.com/igorsalgado/whisper-box, siga o AGENTS.md e transcreva uma gravação minha.
+## Passo 0 — Obter o projeto
 
-O agente lê o [AGENTS.md](AGENTS.md) (o Claude Code o carrega via `CLAUDE.md`), roda `python whisper-box.py doctor`, instala ou prepara o que faltar pedindo sua permissão, pergunta qual arquivo transcrever e executa `python whisper-box.py transcribe --input CAMINHO`. Você recebe os caminhos do TXT, SRT, JSONL e metadados.
-
-## Pré-requisitos
-
-- Windows, Linux ou macOS com **Python 3.8+** no host (somente biblioteca padrão, sem `pip install`).
-- Docker com engine Linux (Docker Desktop ou Docker Engine) e Compose v2 com suporte a `up --wait`.
-- Internet na preparação inicial para imagem, dependências e modelo.
-- Espaço para a imagem, aproximadamente 500 MB de modelo e cópias das gravações.
-
-O Python do host executa apenas o wrapper `whisper-box.py`, que monta as chamadas ao Docker Compose. Bibliotecas de transcrição, FFmpeg/PyAV e o modelo ficam no container; não há GPU nem dependências extras no host. Os limites do worker não incluem o consumo dos outros serviços do Docker.
-
-No Windows, use `py -3` ou `python`; em Linux/macOS, `python3`. Os exemplos abaixo usam `python`.
-
-## Instalação do zero
-
-### 1. Pré-requisitos por sistema
-
-| Sistema | Python 3.8+ | Docker |
-| --- | --- | --- |
-| Windows 10/11 | Instalador de [python.org](https://www.python.org/downloads/) ou `winget install Python.Python.3.12`. Use `py -3` ou `python`. | Docker Desktop com WSL 2 e containers Linux. |
-| Linux | Já incluso na maioria das distribuições (`python3`). | Docker Engine com o plugin Compose v2. Adicione o usuário ao grupo `docker` ou use `sudo`. |
-| macOS | `brew install python` ou instalador de python.org (`python3`). | Docker Desktop. |
-
-Confira antes de continuar (depois de clonar, `python whisper-box.py doctor` faz essa verificação e indica o próximo passo em JSON):
-
-```bash
-python --version          # 3.8 ou superior (python3 em Linux/macOS)
-docker compose version    # Compose v2
-docker info               # engine em execução
-```
-
-### 2. Clonar e preparar (uma vez, com internet)
+Se o repositório ainda não estiver na máquina, clone-o e trabalhe na raiz:
 
 ```bash
 git clone https://github.com/igorsalgado/whisper-box.git
 cd whisper-box
-python whisper-box.py prepare
 ```
 
-`prepare` constrói a imagem e baixa/verifica o modelo (aproximadamente 500 MB). A partir daí, tudo roda offline.
+Reutilize sempre o mesmo clone. O modelo, a fila e os resultados ficam nele; um clone novo exige preparar tudo de novo.
 
-### 3. Uso diário
+## Passo 1 — Garantir Python 3.8+
+
+Teste, nesta ordem, até um responder 3.8 ou superior: `python --version`, `python3 --version` e, no Windows, `py -3 --version`. Nos exemplos abaixo, `python` significa o interpretador encontrado.
+
+Se nenhum existir, peça permissão e instale:
+
+| Sistema | Comando |
+| --- | --- |
+| Windows | `winget install -e --id Python.Python.3.12` |
+| macOS | `brew install python` |
+| Linux | `sudo apt install python3` / `sudo dnf install python3` (conforme a distribuição) |
+
+Nenhum `pip install` é necessário: o wrapper usa só a biblioteca padrão.
+
+## Passo 2 — Diagnosticar e corrigir o ambiente
 
 ```bash
-# Um comando: inicia o worker, submete, aguarda e devolve os caminhos.
-python whisper-box.py transcribe --input "/home/voce/Reunioes/gravacao.mp4"   # Linux/macOS
-python whisper-box.py transcribe --input "C:\Reunioes\gravacao.mp4"           # Windows
-
-# Se a execução for interrompida, retome pelo job_id (impresso em stderr).
-python whisper-box.py transcribe --job "SEU_JOB_ID"
+python whisper-box.py doctor
 ```
 
-Aguarde o arquivo terminar de gravar antes de transcrever. Os passos individuais (`start`, `submit`, `wait`, `result`) continuam disponíveis; veja [Comandos](#comandos).
+A resposta é um JSON com `ready`, `platform`, `checks` e **um** `next_step`. Execute o passo indicado e rode `doctor` de novo, até `"ready": true`.
 
-Em Linux/macOS, o arquivo também pode ser executado diretamente: `./whisper-box.py start`. O mesmo comando funciona em PowerShell, cmd, bash ou zsh; não há scripts específicos de shell.
-
-`prepare` preserva a revisão do modelo já instalada e verifica os hashes. Não precisa executá-lo por reunião. Para reconstruir somente o código, use `docker compose build worker` e depois `start`.
-
-O projeto copia a gravação, detecta alterações durante a cópia e mantém o original intacto. Caminhos com espaços e acentos são aceitos.
-
-## Comandos
-
-Use `python whisper-box.py COMANDO`.
-
-| Comando | Uso |
+| `next_step.code` | O que você faz |
 | --- | --- |
-| `doctor` | Verifica Python, Docker, Compose, engine, imagem e modelo; indica um `next_step` em JSON. |
-| `transcribe --input CAMINHO` | Fluxo completo: start, submit, espera renovada e resultado verificado. Aceita `--language` e `--timeout-seconds` (padrão 7200). |
-| `transcribe --job ID` | Retoma o acompanhamento de um trabalho existente, sem submeter de novo. |
-| `prepare` | Constrói a imagem e prepara/verifica o modelo, com internet. |
-| `start` | Inicia o worker offline; pode ser repetido. |
-| `stop` | Para o worker, preservando fila, modelo e arquivos. |
-| `submit --input CAMINHO` | Copia e enfileira uma gravação; padrão `--language pt`. |
-| `submit --input CAMINHO --language en` | Usa inglês; também aceita `es` e `auto`. |
-| `status --job ID` | Consulta estado, tentativa e último segundo processado. |
-| `wait --job ID --timeout 30` | Aguarda até 30 segundos, devolvendo um único JSON. |
-| `result --job ID` | Retorna os caminhos dos artefatos completos. |
-| `logs` | Mostra os últimos 50 eventos do worker. |
+| `install_docker` / `install_compose` | Explique ao usuário e peça permissão (`requires_user_approval: true`). Instale com o comando de `next_step.action`. Pode exigir administrador, WSL 2 ou reinício; se você não puder executar, entregue a instrução ao usuário e aguarde. |
+| `start_docker` | Inicie o Docker conforme `action`, aguarde até cerca de 2 minutos e rode `doctor` novamente. |
+| `prepare` | Avise que será baixado ~500 MB uma única vez, com internet. Com o ok, execute `python whisper-box.py prepare` (pode levar vários minutos). |
+| `ask_for_recording` | Ambiente pronto. Vá ao passo 3. |
 
-Estados: `queued`, `running`, `succeeded` e `failed`. Os horários de eventos são Unix timestamps em segundos. `progress_seconds` é a posição processada no áudio; não representa previsão de término.
+Recursos: o worker usa até **2 CPUs e 4 GiB de RAM**, sem GPU. Garanta espaço para a imagem, o modelo e as cópias das gravações.
 
-### Códigos de saída
+## Passo 3 — Pedir a gravação ao usuário
 
-| Código | Significado |
-| --- | --- |
-| `0` | Comando atendido; em `wait`/`result`/`transcribe`, trabalho concluído com sucesso; em `doctor`, ambiente pronto. |
-| `1` | Falha no trabalho ou na operação; em `doctor`, há um `next_step` pendente. |
-| `2` | A espera (ou o orçamento de `transcribe`) atingiu o tempo limite; o trabalho continua. |
-| `3` | Argumento inválido ou trabalho inexistente. |
-| `4` | `result` solicitado enquanto o trabalho ainda está pendente/em execução. |
+Se o caminho ainda não estiver na conversa, pergunte:
 
-`status` pode retornar `0` com estado `failed`: a consulta foi atendida. `wait` e `result` retornam `1` nesse estado.
+> Qual gravação devo transcrever? Envie o caminho completo do arquivo — por exemplo `C:\Reunioes\call.mp4` ou `/home/voce/Reunioes/call.mp4`. Aceito vídeo ou áudio (mp4, mp3, wav, m4a…). A gravação precisa estar finalizada. Vou transcrever em português, a menos que você prefira inglês, espanhol ou detecção automática.
 
-## Integração com agentes
+- O arquivo precisa estar **no computador que roda o Docker**. Se o usuário anexou o arquivo na conversa e ele já existe localmente, use esse caminho; caso contrário, peça o caminho local.
+- Caminhos com espaços e acentos são aceitos.
+- Uma gravação por chamada. Para várias, transcreva em sequência.
 
-O roteiro completo para agentes (instalação, diagnóstico, pergunta ao usuário, erros e resposta) está no [AGENTS.md](AGENTS.md). Em resumo:
+## Passo 4 — Transcrever
 
 ```bash
-python whisper-box.py doctor                      # repetir até "ready": true
-python whisper-box.py transcribe --input CAMINHO  # um JSON final em stdout
+python whisper-box.py transcribe --input "CAMINHO" --language pt
 ```
 
-`transcribe` renova `wait` internamente em janelas de até 30 segundos, dentro de `--timeout-seconds`. Sistemas que preferem controlar a espera podem usar `submit` e repetir `wait --job ID --timeout 30` enquanto o código de saída for `2`. Cada `wait` admite de 1 a 60 segundos. Fechar o terminal, desconectar o agente ou encerrar a espera não interrompe o worker. Uma consulta posterior usa o mesmo `job_id`.
+- `--language`: `pt` (padrão), `en`, `es` ou `auto`.
+- O comando inicia o worker, copia e enfileira a gravação, aguarda e verifica o resultado. Ele **bloqueia até terminar**, com orçamento de 2 horas (`--timeout-seconds`, de 1 a 86400).
+- stderr recebe `{"event": "whisper_waiting", "job_id": "..."}`. **Guarde o `job_id`.**
+- Se a sua ferramenta de execução tiver limite de tempo, rode o comando em segundo plano ou com tempo maior. Se a execução cair ou o orçamento acabar, retome com:
 
-`doctor`, `transcribe`, `submit`, `status`, `wait` e `result` escrevem um objeto JSON em stdout. Mensagens operacionais do Docker ficam em stderr: capture os canais separadamente, sem `2>&1` ao interpretar o JSON.
+```bash
+python whisper-box.py transcribe --job JOB_ID
+```
 
-Exemplo abreviado de conclusão no Windows. Os caminhos em `files` seguem o formato do host que executou o wrapper; em Linux/macOS aparecem como `/home/.../saida/...`.
+- **Nunca** submeta a mesma gravação de novo só porque a espera terminou: a fila continua processando. Mesmo que submeta, os mesmos bytes com o mesmo idioma reutilizam o trabalho existente (`reused: true`).
+- Referência medida: 23 minutos de áudio levaram cerca de 3 minutos em CPU. Informe ao usuário que gravações longas podem levar vários minutos.
+
+## Passo 5 — Interpretar e responder
+
+| Código de saída | Significado | O que você faz |
+| --- | --- | --- |
+| `0` | Concluído e verificado. | Entregue os caminhos de `files`. |
+| `1` | Falha da transcrição ou do ambiente. | Relate `error.code` e `error.message`; consulte a tabela de erros. |
+| `2` | Orçamento de espera esgotado; o trabalho continua. | Informe o `job_id` e retome com `transcribe --job`. |
+| `3` | Argumento, arquivo ou trabalho inválido. | Corrija ou peça outro caminho ao usuário. |
+
+Resposta de sucesso (Windows; em Linux/macOS os caminhos são `/home/.../saida/...`):
 
 ```json
 {
@@ -145,78 +116,78 @@ Exemplo abreviado de conclusão no Windows. Os caminhos em `files` seguem o form
 }
 ```
 
-A transcrição local não usa tokens da OpenAI. Conversar com um agente ou pedir que ele leia e resuma a saída pode consumir tokens. Deixar a espera em código evita novas mensagens ao modelo durante o processamento.
+Responda ao usuário assim:
 
-## Persistência e recuperação
+> Transcrição concluída (job `JOB_ID`).
+> - Texto com horários: `files.text`
+> - Legendas SRT: `files.srt`
+> - Segmentos e metadados: `files.segments`, `files.metadata`
+
+Se o usuário pediu resumo, ata, decisões ou tarefas, leia `files.text` nessa etapa. Avise que a transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão.
+
+## Erros e como agir
+
+| Sinal | O que você faz |
+| --- | --- |
+| `python` não encontrado | Passo 1. No Windows, tente `py -3 whisper-box.py`. |
+| `docker_error`, `worker_unavailable` | Rode `doctor`, corrija e repita `transcribe` (com `--job` se já houver identificador). |
+| `permission denied` no socket do Docker (Linux) | Peça permissão para `sudo usermod -aG docker $USER`; o usuário precisa abrir nova sessão. |
+| `model_not_ready` | Rode `doctor` e, se indicado, `prepare`. Se o modelo estiver corrompido, peça ao usuário para preservar/renomear `modelos/` antes de preparar de novo. |
+| `input_not_found` | Confirme o caminho com o usuário. |
+| `input_changed` | A gravação ainda está sendo escrita; aguarde terminar e repita. |
+| `invalid_media`, `no_audio` | O arquivo não tem áudio legível; peça outro. |
+| `failed` com outro motivo | Relate o erro; uma nova submissão cria outro `job_id` e preserva o histórico. |
+| `output_incomplete`, `output_unreachable` | Não apague nada; relate ao usuário com o `job_id`. |
+| Worker encerrado por memória | Relate; peça ao usuário para reduzir outras cargas. Não altere limites por conta própria. |
+
+## Referência
+
+### Comandos
+
+Todos são `python whisper-box.py COMANDO` e escrevem um único JSON em stdout (exceto `logs`).
+
+| Comando | Uso |
+| --- | --- |
+| `doctor` | Diagnostica Python, Docker, Compose, engine, imagem e modelo; indica um `next_step`. Código 0 quando pronto. |
+| `transcribe --input CAMINHO` | Fluxo completo: start, submit, espera renovada e resultado verificado. Aceita `--language` e `--timeout-seconds`. |
+| `transcribe --job ID` | Retoma um trabalho existente, sem submeter de novo. |
+| `prepare` | Uma vez, com internet: constrói a imagem e baixa/verifica o modelo. Preserva a revisão já instalada. |
+| `start` / `stop` | Inicia ou para o worker; fila, modelo e arquivos são preservados. |
+| `submit --input CAMINHO [--language pt]` | Só enfileira e devolve `job_id`. |
+| `wait --job ID --timeout 30` | Aguarda de 1 a 60 segundos; código 2 se o tempo acabar. |
+| `status --job ID` / `result --job ID` | Estado e progresso / caminhos verificados; `result` devolve código 4 se o trabalho ainda estiver pendente. |
+| `logs` | Últimos 50 eventos do worker, para diagnóstico. |
+
+Estados: `queued`, `running`, `succeeded`, `failed`. `progress_seconds` é a posição processada no áudio, não uma previsão de término.
+
+### Onde ficam os dados
 
 | Local | Conteúdo |
 | --- | --- |
 | `entrada/<job_id>/` | Cópia da mídia submetida. |
 | `saida/<job_id>/` | TXT, SRT, JSONL, metadados e manifesto de integridade. |
-| `saida/.partial/` | Tentativas incompletas, não anunciadas como resultados. |
-| `modelos/` | Modelo, revisão e hashes dos arquivos. |
-| Volume Docker `whisper-box_state` | SQLite, lock exclusivo e sinal de saúde. |
+| `saida/.partial/` | Tentativas incompletas; nunca são anunciadas como resultado. |
+| `modelos/` | Modelo, revisão e hashes. |
+| Volume Docker `whisper-box_state` | Fila SQLite, lock exclusivo e sinal de saúde. |
 
-O modelo é carregado no primeiro trabalho e reutilizado até encerrar o worker. O áudio é decodificado em blocos de cinco minutos, limitando memória conforme a duração aumenta.
+Não há limpeza automática. Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, mas a remoção pode exigir `sudo`.
 
-Os resultados só aparecem na pasta final quando todos os artefatos estão completos. `result` verifica os hashes. Alterar ou apagar arquivos finais invalida essa verificação.
+### Garantias do sistema
 
-Submeter os mesmos bytes com o mesmo idioma, versão do pipeline e revisão do modelo reutiliza o trabalho (`reused: true`). Após falha, nova submissão cria outro identificador e preserva o histórico.
+- Fechar o terminal, desconectar o agente ou esgotar a espera **não** interrompe o worker; retome pelo mesmo `job_id`.
+- Após uma interrupção, o worker recupera o trabalho e pode reiniciar o arquivo, com até três tentativas automáticas.
+- Resultados só aparecem completos e com hashes verificados; alterar arquivos finais invalida a verificação.
+- Worker e containers de trabalho rodam com `network_mode: none`; apenas `prepare` usa internet. Sem telemetria, credenciais ou envio de mídia. Logs não contêm o texto da reunião.
 
-Depois de uma interrupção, o worker recupera trabalhos em execução e pode reiniciar o arquivo desde o começo. Há no máximo três tentativas automáticas por trabalho. Erros normais de mídia não são repetidos automaticamente.
+### Limitações para informar ao usuário
 
-Não há limpeza automática: arquivos permanecem até remoção manual. Pare o worker antes de copiar o volume de estado e as pastas para um backup consistente. **Não use `docker compose down -v` se quiser preservar a fila.**
+- Sem captura ao vivo, identificação de falantes ou resumo automático.
+- Silêncio gera texto vazio com `no_speech: true`; mídia sem áudio falha.
+- Fronteiras de cinco minutos podem dividir palavras.
+- Validado em Windows com Docker Linux amd64. Linux e macOS são suportados, mas ainda sem ensaio completo registrado; ARM não foi testado.
 
-## Privacidade e offline
+## Se pedirem para alterar o projeto
 
-- Worker e containers de trabalho usam `network_mode: none`, sem portas abertas.
-- `prepare` é a exceção, com internet para baixar o modelo da Hugging Face.
-- O runtime lê o modelo local e não envia mídia a serviços de transcrição.
-- Não há telemetria de aplicação ou credenciais de APIs.
-- Gravações, saídas, modelos, logs e estado ficam fora do Git e do contexto de build.
-- Logs da aplicação registram identificadores/eventos, sem o texto da reunião.
+Operar e desenvolver são tarefas diferentes. Para mudar código, testes ou documentação, siga [AGENTS.md](AGENTS.md) (regras de desenvolvimento, testes em Docker e Git). Evidências medidas: [docs/VALIDACAO.md](docs/VALIDACAO.md). Contrato original: [action A01](docs/actions/A01-transcricao-offline-docker.md).
 
-Os dados seguem as permissões locais do computador e do Docker. O projeto não implementa criptografia adicional.
-
-## Testes e desenvolvimento
-
-```bash
-docker compose build worker
-docker compose --profile test run --rm --no-deps -T test
-
-# Ensaio pelo wrapper com modelo preparado e mídia fornecida explicitamente.
-python tests/smoke.py --input "/home/voce/Reunioes/gravacao.mp4"
-```
-
-A suíte automatizada roda sem rede e sem carregar o modelo, incluindo os testes do wrapper (`tests/test_wrapper.py`), que simulam o Docker. Eles também rodam no host com `python -m unittest tests.test_wrapper`. O ensaio completo valida também a gravação fornecida, formatos de mídia e silêncio sintético de duas horas. Fixtures e relatório ficam em `logs/`, fora do Git.
-
-Resultados medidos: [docs/VALIDACAO.md](docs/VALIDACAO.md). Contrato: [action A01](docs/actions/A01-transcricao-offline-docker.md).
-
-Para atualizar código/dependências, pare o worker, reconstrua a imagem e execute `start`. Os dados ficam fora da imagem. Mudanças na inferência devem atualizar a versão do pipeline para evitar reutilização incompatível. Não há migração automática de schemas de versões futuras nesta versão.
-
-## Diagnóstico
-
-| Sintoma | Ação |
-| --- | --- |
-| Docker indisponível | Abra o Docker Desktop ou inicie o serviço Docker e aguarde o engine Linux. |
-| `python` não encontrado | Instale Python 3.8+; no Windows, tente `py -3 whisper-box.py`. |
-| `permission denied` no socket do Docker (Linux) | Adicione o usuário ao grupo `docker` e abra nova sessão, ou use `sudo`. |
-| `model_not_ready` | Execute `prepare`. Se o modelo estiver corrompido, pare o worker e preserve/renomeie `modelos` antes de preparar novamente. |
-| `worker_unavailable` | Execute `start` e consulte `logs`. |
-| `wait` com código `2` | Repita com o mesmo identificador. |
-| `failed` | Consulte `status`, corrija o arquivo/ambiente e submeta novamente. |
-| `output_incomplete` | Artefatos foram alterados/removidos; restaure um backup consistente. |
-| Worker encerrado por memória | Consulte `docker inspect`, reduza outras cargas e registre a ocorrência antes de ajustar limites. |
-
-## Limitações
-
-- Validado em Windows com Docker Linux amd64. Linux e macOS são suportados pelo wrapper Python e por testes de caminhos POSIX, mas ainda não têm ensaio completo registrado; ARM não foi testado.
-- Em Linux, arquivos criados pelo container em `entrada/` e `saida/` pertencem ao `root`: são legíveis pelo usuário, mas a remoção manual pode exigir `sudo`.
-- Sem captura ao vivo, identificação de falantes, interface web ou resumo automático.
-- Fronteiras de cinco minutos podem dividir palavras; revise esses trechos quando necessário.
-- Silêncio gera texto/legenda vazios e `no_speech: true`; mídia sem stream de áudio falha.
-- Nomes próprios, siglas, ruído e falas simultâneas afetam a precisão. A transcrição automática pode exigir revisão.
-
-## Dependências
-
-Motor: [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [CTranslate2](https://github.com/OpenNMT/CTranslate2), [PyAV](https://pyav.org/docs/stable/) e [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small). Dependências e modelo mantêm suas próprias licenças. O projeto ainda não define licença de distribuição própria.
+Motor: [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [CTranslate2](https://github.com/OpenNMT/CTranslate2), [PyAV](https://pyav.org/docs/stable/) e [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small), cada um com sua licença. O projeto ainda não define licença própria.

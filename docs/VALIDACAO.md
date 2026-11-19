@@ -98,7 +98,7 @@ Ambiente: Windows 11, Python 3.12.6, Docker 29.8.1 e Compose v5.5.1.
 | Contrato do `transcribe.py` do agents-framework | 11 casos aprovados com backend simulado. |
 | `transcribe.py` com o Whisper Box real | Retomada por `--job` e submissão por `--input` concluídas com código 0 e os quatro artefatos. |
 
-Na mesma data, foram adicionados os comandos para agentes `doctor` (diagnóstico com um `next_step`) e `transcribe` (fluxo completo em um comando), além do roteiro em `AGENTS.md`:
+Na mesma data, foram adicionados os comandos para agentes `doctor` (diagnóstico com um `next_step`) e `transcribe` (fluxo completo em um comando), além do roteiro do agente, hoje no `README.md` como prompt operacional:
 
 | Verificação | Resultado |
 | --- | --- |

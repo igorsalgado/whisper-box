@@ -135,7 +135,7 @@ python whisper-box.py status --job "<job_id>"
 python whisper-box.py result --job "<job_id>"
 ```
 
-Revisão de 19/11/2026: para agentes, `doctor` diagnostica o host e indica um `next_step`, e `transcribe --input`/`--job` encapsula start, submit, espera e resultado em um único comando. O roteiro está em `AGENTS.md`.
+Revisão de 19/11/2026: para agentes, `doctor` diagnostica o host e indica um `next_step`, e `transcribe --input`/`--job` encapsula start, submit, espera e resultado em um único comando. O roteiro do agente está no `README.md`, escrito como prompt operacional.
 
 ### Regras da interface
 
