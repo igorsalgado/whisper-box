@@ -8,7 +8,7 @@
 
 Transcrever gravações de áudio ou vídeo do usuário **localmente**, com Docker, e devolver os caminhos dos arquivos gerados: TXT com horários, legenda SRT, segmentos JSONL e metadados JSON.
 
-O projeto já contém o motor (faster-whisper `small`, CPU, `int8`, português por padrão), a fila, a deduplicação e a recuperação de falhas. Seu trabalho é **preparar o ambiente, pedir o arquivo, executar um comando e reportar o resultado**. Depois da preparação inicial, tudo roda offline, sem API, chave ou custo de tokens durante a transcrição.
+O projeto já contém o motor (faster-whisper `small`, CPU, `int8`, português por padrão), a fila, a deduplicação e a recuperação de falhas. Tudo isso roda dentro da imagem Docker, inclusive o FFmpeg, que vem embutido como biblioteca no PyAV e decodifica mp4, mp3, m4a, wav e outros formatos. O host não precisa de FFmpeg nem de bibliotecas Python. Seu trabalho é **preparar o ambiente, pedir o arquivo, executar um comando e reportar o resultado**. Depois da preparação inicial, tudo roda offline, sem API, chave ou custo de tokens durante a transcrição.
 
 ## Regras invioláveis
 
