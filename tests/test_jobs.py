@@ -114,6 +114,16 @@ class JobsTest(unittest.TestCase):
         with self.assertRaisesRegex(BoxError, 'alterados'):
             status(self.settings, job_id, include_files=True)
 
+    def test_posix_host_root_produces_posix_paths(self):
+        job_id = self.enqueue()
+        self.publish(job_id)
+        self.store.finish(job_id)
+        settings = Settings(self.settings.state, self.settings.inputs, self.settings.outputs,
+                            self.settings.models, '/home/usuario/whisper-box')
+        response = status(settings, job_id, include_files=True)
+        self.assertEqual(response['files']['text'],
+                         f'/home/usuario/whisper-box/saida/{job_id}/transcricao.txt')
+
     def test_recovery_is_bounded_and_preserves_history(self):
         job_id = self.enqueue()
         for attempt in range(1, 4):

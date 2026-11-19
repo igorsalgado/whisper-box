@@ -7,5 +7,6 @@ COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock && pip check
 COPY src ./src
 COPY tests ./tests
+COPY whisper-box.py ./
 ENTRYPOINT ["python", "-m", "whisper_box"]
 CMD ["worker"]
