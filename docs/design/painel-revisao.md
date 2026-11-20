@@ -1,6 +1,6 @@
 # Revisão de design: minipainel do Whisper Box
 
-Escopo: `painel/index.html`, `app.js`, `app.css`, `manifest.webmanifest`, `icone.svg`, mais os seis prints em `C:\tmp\telas\` (janela 380×640) e o contrato `docs/painel-api.md`. Nenhum código foi alterado. Restrições respeitadas: HTML/CSS/JS vanilla, sem dependências, CDN ou fontes externas, e sem mudança na API.
+Escopo: `painel/index.html`, `app.js`, `app.css`, `icone.svg` (o `manifest.webmanifest` foi removido: produto somente desktop, sem PWA), mais os seis prints em `C:\tmp\telas\` (janela 380×640) e o contrato `docs/painel-api.md`. Nenhum código foi alterado. Restrições respeitadas: HTML/CSS/JS vanilla, sem dependências, CDN ou fontes externas, e sem mudança na API.
 
 ## Design Critique: Minipainel Whisper Box
 
@@ -59,7 +59,7 @@ A correção está na seção **Correção do overflow** da especificação.
 | "Cancelar" abre um painel de confirmação abaixo, que empurra o layout. | 🟡 | Trocar a linha de ações pela confirmação no mesmo lugar (sem salto). Esc volta. |
 | Mensagens de erro misturam texto humano e técnico: "(NotAllowedError: Permission denied)". | 🟡 | Mostrar só a frase humana; manter o detalhe técnico no log (já é gravado). |
 | Estado "enviando" mostra só "Enviando…", sem noção de progresso (gravações de 1 h geram ~720 pedaços). | 🟡 | Mostrar "Enviando… 62%", calculado no cliente por `(nextSeq − pendentes) / nextSeq`. Sem mudar a API. |
-| Aviso "Motor parado — rode python whisper-box.py start" exige digitar o comando. | 🟢 | Tornar o comando tocável: toque copia e mostra "Copiado". |
+| Aviso "Motor parado — rode python whisper-box.py start" exige digitar o comando. | 🟢 | Tornar o comando clicável: o clique copia e mostra "Copiado". |
 | A lista de transcrições não tem estado de carregamento (fica em branco até a resposta) nem distingue "sem conexão" de "vazia". | 🟢 | Esqueleto de 3 cards, estado vazio ilustrado com texto e estado de erro que mantém a última lista. |
 | Foco: ao trocar de estado (Gravar → Pausar/Parar), o botão focado some e o foco cai no `body`. A troca de rota não move o foco. | 🟢 | Regras de foco da especificação (mover para o novo botão primário; foco no título oculto da rota). |
 
@@ -114,7 +114,7 @@ Contraste calculado a partir dos tokens de `app.css` (fórmula WCAG 2.x, luminâ
 
 Correções: tokens `--on-danger` e `--on-ok` (valores na especificação), com contraste mínimo de 6,3:1 e 9,6:1 no escuro. O trilho do medidor passa a usar um tom mais escuro.
 
-**Alvos de toque.** Botões de 44 px, nav de 48 px e interruptor de microfone de 44 px estão dentro do recomendado. O `.btn.small` (40 px) e a pílula REC (40 px) ficam abaixo de 44, mas acima do mínimo de 24 px do WCAG 2.2 (2.5.8). Padronizar em 44 px. O botão de ícone do card terá 44×44.
+**Alvos de clique.** Botões de 44 px, nav de 48 px e interruptor de microfone de 44 px estão dentro do recomendado. O `.btn.small` (40 px) e a pílula REC (40 px) ficam abaixo de 44, mas acima do mínimo de 24 px do WCAG 2.2 (2.5.8). Padronizar em 44 px. O botão de ícone do card terá 44×44.
 
 **Legibilidade.** Textos de 10,8 a 12,3 px (nav, data, dica, diagnóstico) estão pequenos para uma janela compacta lida à distância de braço. Mínimo de 12 px, e 12,5 px para metadados do card.
 
@@ -337,7 +337,7 @@ Largura total, `gap:8px`. Botões de 44 px, `flex:1 1 0`, `min-width:0` (remover
 ```
 
 - Pausar: `secondary`. Parar: `secondary` com texto e contorno `--danger` (6,3:1 no escuro sobre `--card`; manter contorno de 2 px).
-- "Descartar gravação" é `ghost` (texto `--muted` sublinhado), com `margin-top:16px` e **separado dos botões principais por ≥16 px** para evitar toque acidental. Mantém 44 px de altura.
+- "Descartar gravação" é `ghost` (texto `--muted` sublinhado), com `margin-top:16px` e **separado dos botões principais por ≥16 px** para evitar clique acidental. Mantém 44 px de altura.
 
 **Pausado**
 
@@ -458,7 +458,7 @@ Altura 20 px, padding `0 8px`, `--r-pill`, 12,5 px/600.
 | Estado | Regra |
 | --- | --- |
 | **Carregando (1ª carga)** | 3 cards esqueleto (altura 62 px; duas barras cinza de 60% e 35% da largura; `--vu` com pulsar de opacidade 1,2 s; estático em reduced-motion). `aria-busy="true"` no `<ul>` e `role="status"` com texto oculto "Carregando transcrições". |
-| **Vazio (sem transcrições)** | Centralizado verticalmente: ícone de lista (32 px, `--muted`), `Nenhuma transcrição ainda.` (14 px/600) e `Grave uma reunião e toque em Transcrever.` (12,5 px, `--muted`). Sem botão (a nav já leva a Gravar). |
+| **Vazio (sem transcrições)** | Centralizado verticalmente: ícone de lista (32 px, `--muted`), `Nenhuma transcrição ainda.` (14 px/600) e `Grave uma reunião e clique em Transcrever.` (12,5 px, `--muted`). Sem botão (a nav já leva a Gravar). |
 | **Erro de carga** | Faixa de erro no topo da lista: `Sem conexão com o painel. Tentando de novo…`; manter a última lista visível (esmaecida a 0,6 se for velha); tentar novamente a cada 5 s (comportamento atual). Na 1ª carga sem dados: só a faixa, sem esqueleto. |
 | **Em andamento** | Atualização a cada 3 s (atual). Atualizar o DOM sem recriar toda a lista, se possível (evita piscar e perda de foco). Se recriar, restaurar o foco no mesmo `job_id`. |
 | **Lista cheia** | Até 50 itens (API). Sem paginação. Rolagem interna, nav sempre visível. |
@@ -511,12 +511,12 @@ Faixa no topo (`#aviso`), 1 a 2 linhas, `role="status"`, ícone ⚠ SVG de 16 px
 
 ```
 +------------------------------------------------+
-| ⚠  Motor parado. Toque para copiar o comando:  |
+| ⚠  Motor parado. Clique para copiar o comando:  |
 |    [python whisper-box.py start]               |
 +------------------------------------------------+
 ```
 
-- O comando é um `<button class="cmd">` (mono 12 px, `--card`, borda `--bd`, altura 44 px na área de toque via padding vertical) que copia o texto; feedback `Copiado ✓` por 2 s no próprio botão.
+- O comando é um `<button class="cmd">` (mono 12 px, `--card`, borda `--bd`, altura 44 px na área clicável via padding vertical) que copia o texto; feedback `Copiado ✓` por 2 s no próprio botão.
 - Modelo: `Modelo não preparado. Rode: [python whisper-box.py prepare]` (mesmo comando-botão).
 - Painel sem resposta: `Sem resposta do painel. Verifique se o contêiner está no ar.` Em cor de erro (`--err-bg`/`--err-bd`), sem comando.
 - A faixa **não bloqueia** a gravação (o áudio é salvo mesmo com o motor parado). Aparece em todas as rotas, e `checkSaude()` roda também ao entrar em Transcrições e Logs (hoje só em Gravar).
@@ -570,7 +570,7 @@ Ajustes de tom: verbo no infinitivo para ações, ponto final em frases, "janela
 
 | Código | Texto |
 | --- | --- |
-| NotAllowedError (tela) | Compartilhamento cancelado. Toque em Gravar e escolha Tela inteira com áudio do sistema. |
+| NotAllowedError (tela) | Compartilhamento cancelado. Clique em Gravar e escolha Tela inteira com áudio do sistema. |
 | NotAllowedError (mic) | Microfone bloqueado. Libere o acesso nas configurações do site. |
 | NotFoundError (mic) | Nenhum microfone encontrado. |
 | NotFoundError (tela) | Nenhuma fonte de captura encontrada. |
@@ -579,16 +579,16 @@ Ajustes de tom: verbo no infinitivo para ações, ponto final em frases, "janela
 | navegador sem suporte | Este navegador não captura áudio do sistema. Use Chrome ou Edge. |
 | contexto inseguro | Abra o painel em http://127.0.0.1. |
 | criar gravação falhou | Não foi possível iniciar a gravação no painel. |
-| envio incompleto | Falha ao enviar. Toque em Transcrever para tentar de novo. |
+| envio incompleto | Falha ao enviar. Clique em Transcrever para tentar de novo. |
 | transcrição falhou | Não foi possível transcrever. Tente de novo. |
-| worker_unavailable | Motor parado. Inicie-o e toque em Transcrever. |
+| worker_unavailable | Motor parado. Inicie-o e clique em Transcrever. |
 | lista de transcrições | Sem conexão com o painel. Tentando de novo… |
 
 **Lista de transcrições**
 
 | Estado | Texto |
 | --- | --- |
-| Vazio | **Nenhuma transcrição ainda.** Grave uma reunião e toque em Transcrever. |
+| Vazio | **Nenhuma transcrição ainda.** Grave uma reunião e clique em Transcrever. |
 | Fila | Na fila · aguardando a vez |
 | Processando | Processando · 03:20 processados |
 | Concluída | Concluída · 00:07 |
@@ -599,7 +599,7 @@ Ajustes de tom: verbo no infinitivo para ações, ponto final em frases, "janela
 
 | Situação | Texto |
 | --- | --- |
-| Motor parado | Motor parado. Toque para copiar o comando: `python whisper-box.py start` |
+| Motor parado | Motor parado. Clique para copiar o comando: `python whisper-box.py start` |
 | Modelo | Modelo não preparado. Rode: `python whisper-box.py prepare` |
 | Painel | Sem resposta do painel. Verifique se o contêiner está no ar. |
 
@@ -637,7 +637,7 @@ Bloco único para desligar tudo:
 | Esc | Cancela a confirmação de descarte e devolve o foco | Só com a confirmação aberta |
 | Alt+1 / Alt+2 / Alt+3 | Gravar / Transcrições / Logs | Em qualquer rota |
 
-Não usar Espaço para Parar ou Descartar (ações com consequência). Parar e Descartar exigem Tab + Enter, ou toque.
+Não usar Espaço para Parar ou Descartar (ações com consequência). Parar e Descartar exigem Tab + Enter, ou clique.
 
 **Gestão de foco:**
 

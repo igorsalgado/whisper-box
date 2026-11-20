@@ -214,7 +214,7 @@ function renderAviso() {
   if (key === 'ok') { aviso.hidden = true; return; }
   const t = mk('div', 'txt');
   if (key === 'painel') t.append('Sem resposta do painel. Verifique se o contêiner está no ar.');
-  else if (key === 'motor') t.append('Motor parado. Toque para copiar o comando: ', cmdButton('python whisper-box.py start'));
+  else if (key === 'motor') t.append('Motor parado. Clique para copiar o comando: ', cmdButton('python whisper-box.py start'));
   else t.append('Modelo não preparado. Rode: ', cmdButton('python whisper-box.py prepare'));
   aviso.append(icon('alert', 16), t);
   aviso.hidden = false;
@@ -361,7 +361,7 @@ function errMsg(e, ctx) {
   const n = (e && e.name) || 'Erro';
   log('Detalhe técnico (' + ctx + ')', n + (e && e.message ? ': ' + e.message : ''));
   const map = {
-    NotAllowedError: ctx === 'mic' ? 'Microfone bloqueado. Libere o acesso nas configurações do site.' : 'Compartilhamento cancelado. Toque em Gravar e escolha Tela inteira com áudio do sistema.',
+    NotAllowedError: ctx === 'mic' ? 'Microfone bloqueado. Libere o acesso nas configurações do site.' : 'Compartilhamento cancelado. Clique em Gravar e escolha Tela inteira com áudio do sistema.',
     NotFoundError: ctx === 'mic' ? 'Nenhum microfone encontrado.' : 'Nenhuma fonte de captura encontrada.',
     NotReadableError: 'Dispositivo em uso por outro aplicativo.',
     AbortError: 'A captura foi interrompida antes de iniciar.',
@@ -652,7 +652,7 @@ async function transcribe() {
   if (s.q.failed) {
     log('Envio incompleto', s.q.failed);
     setState('parado', msgParada(s));
-    setError('Falha ao enviar. Toque em Transcrever para tentar de novo.');
+    setError('Falha ao enviar. Clique em Transcrever para tentar de novo.');
     return;
   }
   try {
@@ -666,7 +666,7 @@ async function transcribe() {
   } catch (e) {
     log('Falha ao transcrever (' + e.code + ')', e.message);
     setState('parado', msgParada(s));
-    setError(e.code === 'worker_unavailable' ? 'Motor parado. Inicie-o e toque em Transcrever.' : 'Não foi possível transcrever. Tente de novo.');
+    setError(e.code === 'worker_unavailable' ? 'Motor parado. Inicie-o e clique em Transcrever.' : 'Não foi possível transcrever. Tente de novo.');
     checkSaude();
   }
 }
