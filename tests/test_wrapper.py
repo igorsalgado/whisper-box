@@ -83,11 +83,37 @@ class WrapperTest(CallMixin, unittest.TestCase):
         self.assertEqual(json.loads(lines[0])['error']['code'], 'docker_error')
 
     def test_lifecycle_commands_report_status_or_docker_error(self):
-        code, lines, calls = self.call(['start'], [completed(0)])
-        self.assertEqual((code, lines), (0, ['{"status":"ready"}']))
+        with patch.dict(wrapper.os.environ, {'WHISPER_BOX_PAINEL_PORT': ''}):
+            code, lines, calls = self.call(['start'], [completed(0), completed(0)])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0]), {'status': 'ready',
+                                                'painel_url': 'http://127.0.0.1:8765/'})
         self.assertIn('--wait', calls[0][0])
+        self.assertEqual(calls[0][0][-1], 'worker')
+        self.assertEqual(calls[1][0][-1], 'painel')
+        code, lines, calls = self.call(['stop'], [completed(0)])
+        self.assertEqual((code, lines), (0, ['{"status":"stopped"}']))
+        self.assertEqual(calls[0][0][-3:], ['stop', 'worker', 'painel'])
         code, lines, _ = self.call(['stop'], [completed(1)])
         self.assertEqual(code, 1)
+        self.assertEqual(json.loads(lines[-1])['error']['code'], 'docker_error')
+
+    def test_start_honors_panel_port_from_environment(self):
+        with patch.dict(wrapper.os.environ, {'WHISPER_BOX_PAINEL_PORT': '9000'}):
+            code, lines, _ = self.call(['start'], [completed(0), completed(0)])
+        self.assertEqual(json.loads(lines[0])['painel_url'], 'http://127.0.0.1:9000/')
+
+    def test_panel_failure_does_not_break_start(self):
+        code, lines, _ = self.call(['start'], [completed(0), completed(1)])
+        body = json.loads(lines[0])
+        self.assertEqual((code, len(lines), body['status']), (0, 1, 'ready'))
+        self.assertIn('painel_error', body)
+        self.assertNotIn('painel_url', body)
+
+    def test_worker_failure_skips_panel(self):
+        code, lines, calls = self.call(['start'], [completed(1)])
+        self.assertEqual((code, len(calls)), (1, 1))
         self.assertEqual(json.loads(lines[-1])['error']['code'], 'docker_error')
 
     def test_prepare_skips_model_when_build_fails(self):
@@ -95,6 +121,227 @@ class WrapperTest(CallMixin, unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(calls), 1)
         self.assertEqual(json.loads(lines[-1])['error']['code'], 'docker_error')
+
+
+class BrowserTest(unittest.TestCase):
+    def find(self, platform, existing=(), env=None, which=None):
+        existing = set(existing)
+        return wrapper.find_browser(env or {}, platform, exists=lambda p: p in existing,
+                                    which=lambda name: (which or {}).get(name))
+
+    def test_windows_prefers_edge_and_searches_all_bases(self):
+        env = {'ProgramFiles': r'C:\Program Files', 'ProgramFiles(x86)': r'C:\Program Files (x86)',
+               'LOCALAPPDATA': r'C:\Users\u\AppData\Local'}
+        edge = r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+        chrome = r'C:\Program Files\Google\Chrome\Application\chrome.exe'
+        local_chrome = r'C:\Users\u\AppData\Local\Google\Chrome\Application\chrome.exe'
+        self.assertEqual(self.find('windows', [edge, chrome], env), edge)
+        self.assertEqual(self.find('windows', [chrome], env), chrome)
+        self.assertEqual(self.find('windows', [local_chrome], env), local_chrome)
+        self.assertIsNone(self.find('windows', [], env))
+
+    def test_windows_env_copy_with_uppercase_keys(self):
+        # dict(os.environ) no Windows tem chaves em maiúsculas.
+        env = {'PROGRAMFILES': r'C:\Program Files', 'PROGRAMFILES(X86)': r'C:\Program Files (x86)'}
+        edge = r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+        self.assertEqual(self.find('windows', [edge], env), edge)
+
+    def test_macos_prefers_chrome(self):
+        chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        edge = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+        self.assertEqual(self.find('macos', [edge, chrome]), chrome)
+        self.assertEqual(self.find('macos', [edge]), edge)
+        self.assertIsNone(self.find('macos'))
+
+    def test_linux_uses_path_lookup_in_order(self):
+        found = {'chromium': '/usr/bin/chromium', 'google-chrome': '/usr/bin/google-chrome'}
+        self.assertEqual(self.find('linux', which=found), '/usr/bin/google-chrome')
+        self.assertIsNone(self.find('linux'))
+
+    def test_explicit_browser_overrides_search(self):
+        env = {'WHISPER_BOX_NAVEGADOR': '/opt/meu/navegador'}
+        self.assertEqual(self.find('linux', ['/opt/meu/navegador'], env, {'chromium': '/x'}), '/opt/meu/navegador')
+        self.assertIsNone(self.find('linux', [], env, {'chromium': '/x'}))
+
+    def test_browser_arguments(self):
+        root = Path('/repo')
+        arguments = wrapper.browser_arguments('/b/edge', 'http://127.0.0.1:8765/?ajudante=8766&token=t', root)
+        self.assertEqual(arguments, [
+            '/b/edge', '--app=http://127.0.0.1:8765/?ajudante=8766&token=t',
+            '--user-data-dir=' + str(root / '.navegador'), '--window-size=380,640',
+            '--no-first-run', '--no-default-browser-check'])
+
+
+class PanelCommandTest(CallMixin, unittest.TestCase):
+    def test_browser_not_found_returns_url_and_code_1(self):
+        with patch.object(wrapper, 'find_browser', return_value=None), \
+                patch.dict(wrapper.os.environ, {'WHISPER_BOX_PAINEL_PORT': ''}):
+            code, lines, calls = self.call(['painel'], [completed(0), completed(0)])
+        self.assertEqual((code, len(lines)), (1, 1))
+        error = json.loads(lines[0])['error']
+        self.assertEqual(error['code'], 'browser_not_found')
+        self.assertIn('http://127.0.0.1:8765/', error['message'])
+        self.assertEqual((calls[0][0][-1], calls[1][0][-1]), ('worker', 'painel'))
+
+    def test_worker_failure_stops_before_browser(self):
+        with patch.object(wrapper, 'find_browser') as find:
+            code, lines, calls = self.call(['painel'], [completed(1)])
+        self.assertEqual((code, len(calls)), (1, 1))
+        self.assertEqual(json.loads(lines[0])['error']['code'], 'docker_error')
+        find.assert_not_called()
+
+    def test_opens_app_window_prints_one_json_without_token_and_exits_with_browser(self):
+        launched = []
+        real_start_helper = wrapper.start_helper
+
+        class FakeProcess:
+            polls = 0
+
+            def poll(self):
+                FakeProcess.polls += 1
+                return None if FakeProcess.polls < 3 else 0
+
+            def terminate(self):
+                raise AssertionError('o navegador ja tinha terminado')
+
+        def fake_popen(arguments, **kwargs):
+            launched.append(arguments)
+            return FakeProcess()
+
+        with patch.object(wrapper, 'find_browser', return_value='/b/edge'), \
+                patch.object(wrapper, 'BROWSER_SETTLE_SECONDS', 0.0), \
+                patch.object(wrapper, 'start_helper', wraps=lambda token, panel_port: real_start_helper(
+                    token, panel_port, base_port=0)) as helper, \
+                patch.object(wrapper.subprocess, 'Popen', side_effect=fake_popen), \
+                patch.dict(wrapper.os.environ, {'WHISPER_BOX_PAINEL_PORT': ''}):
+            code, lines, _ = self.call(['painel'], [completed(0), completed(0)])
+        self.assertEqual(code, 0)
+        body = json.loads(lines[0])
+        self.assertEqual(len(lines), 1)
+        self.assertEqual((body['status'], body['painel_url']), ('open', 'http://127.0.0.1:8765/'))
+        self.assertNotIn('token', lines[0])
+        arguments = launched[0]
+        self.assertEqual(arguments[0], '/b/edge')
+        self.assertRegex(arguments[1], r'^--app=http://127\.0\.0\.1:8765/\?ajudante=%d&token=[\w-]{32}$'
+                         % body['ajudante_port'])
+        self.assertIn('--window-size=380,640', arguments)
+        self.assertIn('--user-data-dir=' + str(wrapper.ROOT / '.navegador'), arguments)
+        helper.assert_called_once()
+
+
+class HelperTest(unittest.TestCase):
+    TOKEN = 'token-de-teste'
+    PANEL_PORT = 8765
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.job = 'a' * 32
+        (self.root / 'saida' / self.job).mkdir(parents=True)
+        (self.root / 'saida' / ('b' * 32)).write_text('arquivo, nao pasta')
+        self.opened = []
+        self.server, self.port = wrapper.start_helper(
+            self.TOKEN, self.PANEL_PORT, self.root, opener=self.opened.append, base_port=0)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.temp.cleanup()
+
+    def request(self, method='POST', path='/abrir-pasta', body=None, headers=None):
+        import http.client
+        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        if headers is None:
+            headers = {'X-Whisper-Box-Token': self.TOKEN, 'Content-Type': 'application/json'}
+        if isinstance(body, dict):
+            body = json.dumps(body).encode()
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        return response
+
+    def post(self, job_id=None, **kwargs):
+        return self.request(body={'job_id': job_id or self.job}, **kwargs)
+
+    def test_valid_request_opens_folder(self):
+        response = self.post(headers={'X-Whisper-Box-Token': self.TOKEN,
+                                      'Origin': 'http://127.0.0.1:%d' % self.PANEL_PORT})
+        self.assertEqual(response.status, 204)
+        self.assertEqual(response.getheader('Access-Control-Allow-Origin'),
+                         'http://127.0.0.1:%d' % self.PANEL_PORT)
+        self.assertEqual(self.opened, [self.root / 'saida' / self.job])
+
+    def test_invalid_or_missing_token_is_403(self):
+        for headers in ({'X-Whisper-Box-Token': 'errado'}, {}):
+            self.assertEqual(self.post(headers=headers).status, 403)
+        self.assertEqual(self.opened, [])
+
+    def test_invalid_host_is_421(self):
+        headers = {'X-Whisper-Box-Token': self.TOKEN, 'Host': 'evil.example:%d' % self.port}
+        self.assertEqual(self.post(headers=headers).status, 421)
+        self.assertEqual(self.opened, [])
+
+    def test_foreign_origin_is_rejected_without_cors_header(self):
+        response = self.post(headers={'X-Whisper-Box-Token': self.TOKEN, 'Origin': 'http://evil.example'})
+        self.assertEqual(response.status, 403)
+        self.assertIsNone(response.getheader('Access-Control-Allow-Origin'))
+        self.assertEqual(self.opened, [])
+
+    def test_invalid_job_ids_are_400_and_never_open(self):
+        for job_id in ('../' + 'a' * 29, 'A' * 32, 'a' * 31, 'a' * 32 + '/..', 5, None):
+            self.assertEqual(self.request(body={'job_id': job_id}).status, 400)
+        self.assertEqual(self.request(body=b'nao e json').status, 400)
+        self.assertEqual(self.request(body=b'').status, 400)
+        self.assertEqual(self.opened, [])
+
+    def test_missing_folder_or_plain_file_is_404(self):
+        self.assertEqual(self.post('c' * 32).status, 404)
+        self.assertEqual(self.post('b' * 32).status, 404)
+        self.assertEqual(self.opened, [])
+
+    def test_preflight_allows_panel_origin_only(self):
+        for origin in ('http://127.0.0.1:%d' % self.PANEL_PORT, 'http://localhost:%d' % self.PANEL_PORT):
+            response = self.request('OPTIONS', headers={'Origin': origin,
+                                                        'Access-Control-Request-Method': 'POST'})
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.getheader('Access-Control-Allow-Origin'), origin)
+            allowed = response.getheader('Access-Control-Allow-Headers').lower()
+            self.assertIn('content-type', allowed)
+            self.assertIn('x-whisper-box-token', allowed)
+        response = self.request('OPTIONS', headers={'Origin': 'http://evil.example'})
+        self.assertEqual(response.status, 403)
+        self.assertIsNone(response.getheader('Access-Control-Allow-Origin'))
+
+    def test_no_other_routes(self):
+        self.assertEqual(self.request('GET', '/', headers={}).status, 404)
+        self.assertEqual(self.request('GET', '/abrir-pasta', headers={}).status, 404)
+        self.assertEqual(self.request('POST', '/outra', body={}).status, 404)
+
+    def test_opener_failure_is_500(self):
+        def failing(path):
+            raise OSError('sem gerenciador')
+
+        server, port = wrapper.start_helper(self.TOKEN, self.PANEL_PORT, self.root, opener=failing, base_port=0)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        import http.client
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        connection.request('POST', '/abrir-pasta', body=json.dumps({'job_id': self.job}).encode(),
+                           headers={'X-Whisper-Box-Token': self.TOKEN})
+        self.assertEqual(connection.getresponse().status, 500)
+
+    def test_busy_port_falls_through_to_next(self):
+        import socket
+        blocker = socket.socket()
+        blocker.bind(('127.0.0.1', 0))
+        blocker.listen(1)
+        self.addCleanup(blocker.close)
+        busy = blocker.getsockname()[1]
+        server, port = wrapper.start_helper(self.TOKEN, self.PANEL_PORT, self.root, base_port=busy)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.assertGreater(port, busy)
 
 
 class DoctorTest(unittest.TestCase):

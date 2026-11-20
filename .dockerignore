@@ -9,3 +9,4 @@
 !whisper-box.py
 **/__pycache__/
 **/*.pyc
+.navegador/
