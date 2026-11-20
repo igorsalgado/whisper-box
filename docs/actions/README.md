@@ -1,6 +1,6 @@
 # Actions do Whisper Box — índice e roteiro
 
-Atualizado em 20/11/2026 (HEAD `da88101`). Cada action é um documento autossuficiente para um agente executar sozinho: contexto, objetivo, escopo, fora de escopo, tarefas numeradas, contrato afetado, critérios de aceite numerados, validação com comandos, riscos e dependências. O roteiro é um plano de trabalho, não uma promessa de prazo.
+Atualizado em 20/11/2026 (HEAD `7eec6ec`). Cada action é um documento autossuficiente para um agente executar sozinho: contexto, objetivo, escopo, fora de escopo, tarefas numeradas, contrato afetado, critérios de aceite numerados, validação com comandos, riscos e dependências. O roteiro é um plano de trabalho, não uma promessa de prazo.
 
 **Plataforma (decisão do Igor, 20/11/2026): o produto é exclusivamente desktop.** A interface é a janela própria aberta por `python whisper-box.py painel` (Edge ou Chrome em modo `--app`). Não há app instalável, PWA, service worker nem versão para celular. Windows com Docker Desktop é a plataforma **validada**; macOS e Linux desktop são **suporte não validado** (o código os trata, mas não há ensaio completo registrado; o áudio do sistema no navegador é limitado no macOS).
 
@@ -10,17 +10,17 @@ Atualizado em 20/11/2026 (HEAD `da88101`). Cada action é um documento autossufi
 | --- | --- | --- | --- | --- |
 | [A01](A01-transcricao-offline-docker.md) | Transcrição offline com Docker, fila, CLI e wrapper | **Concluída** e validada em 12/11/2026 (revisões de 19 e 20/11) | — | — |
 | [A02](A02-captura-ingestao-analise.md) | Captura, ingestão e análise | **F3 (painel) concluída e validada pelo usuário em 20/11/2026** (captura de áudio do sistema e microfone no Edge; gravar, transcrever e abrir pasta). F0, F1, F2 e F4 redistribuídas (abaixo) | — | — |
-| [A03](A03-contrato-do-motor.md) | Contrato do motor (ex-F0): I1 a I6, `list`, robustez do wrapper | **Em execução** (decisão “corrigir bugs”, 20/11/2026) | 1 | M |
-| [A04](A04-retencao-e-limpeza-de-disco.md) | Retenção, `purge`, limpeza de `.partial` e staging, espaço livre | Pronta; **padrão de retenção aguarda decisão (D1)** | 2 | M |
-| [A05](A05-skill-de-analise.md) | Skill de análise de transcrições (ex-F1) | Pronta (depende do `list` da A03) | 3 | S/M |
-| [A06](A06-desempenho-e-robustez-do-motor.md) | Desempenho e robustez: threads/CPU, `exec`, observabilidade, checkpoint condicional | Pronta (medir antes de mudar) | 4 | M/L |
-| [A07](A07-endurecimento-e-operacao.md) | Endurecimento, CI, consentimento, fronteiras de bloco, ensaios da F3 | Opcional, em blocos independentes | 5 | M |
+| [A03](A03-contrato-do-motor.md) | Contrato do motor (ex-F0): I1 a I6, `list`, robustez do wrapper | **Concluída** em 20/11/2026 (`dda345f`; 118 testes, transcribe real com código 0) | — | — |
+| [A04](A04-retencao-e-limpeza-de-disco.md) | Retenção, `purge`, limpeza de `.partial` e staging, espaço livre | **Em execução**; D1 resolvida (apagar a cópia de entrada após sucesso verificado) | 1 | M |
+| [A05](A05-skill-de-analise.md) | Skill de análise de transcrições (ex-F1) | **Em execução** (D2: 1 arquivo, padrão recomendado) | 1 | S/M |
+| [A06](A06-desempenho-e-robustez-do-motor.md) | Desempenho e robustez: threads/CPU, `exec`, observabilidade, checkpoint condicional | Pronta (medir antes de mudar) | 2 | M/L |
+| [A07](A07-endurecimento-e-operacao.md) | Endurecimento, CI, consentimento, fronteiras de bloco, ensaios da F3 | Opcional, em blocos independentes | 3 | M |
 
 ### Para onde foi cada fase da A02
 
 | Fase da A02 | Destino |
 | --- | --- |
-| F0 — Contrato do motor (I1 a I6, `list`, Ctrl+C/timeout) | **A03** (em execução) |
+| F0 — Contrato do motor (I1 a I6, `list`, Ctrl+C/timeout) | **A03** (concluída) |
 | F0 — Retenção, `purge`, limpeza de `saida/.partial/` | **A04** |
 | F1 — Skill de análise | **A05** |
 | F2 — Ingestão automática (pasta vigiada) | **Backlog** (decisão na seção 4) |
@@ -42,13 +42,13 @@ Atualizado em 20/11/2026 (HEAD `da88101`). Cada action é um documento autossufi
 
 ## 2. Ordem recomendada para a próxima sessão
 
-1. **A03 (em execução)** primeiro e sozinha: corrige o contrato (I1 a I6), entrega o `list` e mexe em `whisper-box.py`, `store.py`, `jobs.py` e `__main__.py`, os mesmos arquivos de A04 e A06. Fazer o merge antes de abrir as outras evita conflito.
+1. **A03 (concluída em 20/11/2026)** primeiro e sozinha: corrige o contrato (I1 a I6), entrega o `list` e mexe em `whisper-box.py`, `store.py`, `jobs.py` e `__main__.py`, os mesmos arquivos de A04 e A06. Fazer o merge antes de abrir as outras evita conflito.
 2. **A04 e A05 em paralelo** (agentes distintos) depois do merge da A03. A04 mexe em `pipeline.py`, `worker.py`, `painel.py`, `painel/app.js` e `compose.yaml`; A05 em `.claude/`, `AGENTS.md`, `README.md`, `.gitignore` e testes. Atenção apenas às edições simultâneas de README e `AGENTS.md` (integrar em sequência). A04 já pode começar as tarefas 1 a 3 e 5 durante a A03.
 3. **A06** em seguida, **medindo primeiro**: depende de A03 (wrapper) e de A04 (`purge` para repetir benchmarks e a regra de `.partial`). Checkpoint só se o Igor decidir.
 4. **A07** por blocos, quando houver tempo. O **bloco 1 (ensaios manuais da F3)** não depende de código e pode ser feito pelo Igor a qualquer momento.
 
 ```text
-A03 (em execução) ──┬──► A04 ──┐
+A03 (concluída) ───┬──► A04 ──┐
                     ├──► A05   ├──► A06 ──► A07 (blocos 3, 6 e 7.1 depois de A04/A06)
                     └──────────┘
 A07 bloco 1 (ensaios manuais): independente, a qualquer momento
@@ -99,7 +99,6 @@ A07 bloco 1 (ensaios manuais): independente, a qualquer momento
 
 | # | Decisão | Recomendação | Afeta |
 | --- | --- | --- | --- |
-| D1 | **Retenção padrão da cópia de entrada** (pergunta 1 da A02) | Apagar `entrada/<job_id>/` após sucesso verificado e manter a transcrição, com `WHISPER_BOX_INPUT_RETENTION` configurável. **Consequência:** para gravações feitas no painel o áudio deixa de existir; alternativa: manter 7 dias. Sem decisão, a A04 entrega com `keep`. | A04 |
 | D2 | Formato da análise (pergunta 7): 1 ou 3 arquivos | 1 arquivo, `analises/<job_id>/analise.md` | A05 |
 | D3 | F2 (pasta vigiada) fica no backlog? | Sim, conforme a seção 4 | Escopo |
 | D4 | Checkpoint por bloco: agora ou com dados de uso | Esperar dados; instrumentação da A06 primeiro | A06 |
@@ -111,7 +110,8 @@ A07 bloco 1 (ensaios manuais): independente, a qualquer momento
 | --- | --- | --- | --- |
 | D5 | PWA instalável (service worker) | **Descartado**, não adiado. “Sem app, é totalmente desktop esse dev”: o produto é exclusivamente desktop, com janela própria (`python whisper-box.py painel`, Edge/Chrome em modo `--app`). O manifest PWA sai de `painel/`. | A02 (critério 31, fluxo e escopo da F3) e A07 (bloco 5) reescritos |
 | D7 | Validação de uso real do painel | “Todas as funcionalidades estão ok”: o Igor validou captura de áudio do sistema e microfone no Edge, gravar, transcrever e abrir pasta. | A02: critérios 24, 25 e 30 validados |
-| D8 | Próximo passo | “Corrigir bugs”: a A03 entra em execução. | A03 em execução |
+| D8 | Próximo passo | “Corrigir bugs”: a A03 entra em execução. | A03 concluída (`dda345f`) |
+| D1 | Retenção padrão da cópia de entrada (pergunta 1 da A02) | **Apagar `entrada/<job_id>/` após sucesso verificado** e manter a transcrição, com `WHISPER_BOX_INPUT_RETENTION` configurável. Para gravações do painel o áudio deixa de existir. | A04 em execução |
 
 Perguntas da A02 já resolvidas: 2 (idioma automático no painel), 4, 5, 6 (captura de áudio do sistema inteiro com “Tela inteira” validada no Edge; áudio por aplicativo não testado), 8 e a de privacidade. A pergunta 3 (`processadas/`) fica sem efeito enquanto não houver pasta vigiada.
 
