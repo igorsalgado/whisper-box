@@ -27,6 +27,48 @@ x-runtime: &runtime
       max-file: "2"
 
 services:
+  # Painel de gravacao (A02/F3): API local + pagina estatica (biblioteca padrao).
+  # Unico servico com rede (bridge propria) e porta publicada, somente em loopback.
+  # Recebe a gravacao em entrada/.gravacoes e a envia ao worker pela fila (state);
+  # le saida/ e modelos/ somente leitura. O worker segue com network_mode: none.
+  # Roda como root (donos de state/entrada sao root) sem nenhuma capability.
+  painel:
+    image: whisper-box:local
+    pull_policy: never
+    init: true
+    command: [painel]
+    networks: [painel]
+    ports:
+      - "127.0.0.1:${WHISPER_BOX_PAINEL_PORT:-8765}:8765"
+    environment:
+      <<: *environment
+      WHISPER_BOX_PAINEL_PORT: ${WHISPER_BOX_PAINEL_PORT:-8765}
+    volumes:
+      - state:/state
+      - ./entrada:/input
+      - ./saida:/output:ro
+      - ./modelos:/models:ro
+      - ./painel:/srv/painel:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 64
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    healthcheck:
+      test: [CMD, python, -c, "import os, urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8765/api/saude', headers={'Host': '127.0.0.1:' + os.environ['WHISPER_BOX_PAINEL_PORT']}), timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
   worker:
     <<: *runtime
     build: .
@@ -68,6 +110,9 @@ services:
     mem_limit: 1g
     volumes: []
     entrypoint: [python, -m, unittest, discover, -s, tests, -v]
+
+networks:
+  painel:
 
 volumes:
   state:

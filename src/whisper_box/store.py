@@ -55,6 +55,12 @@ class Store:
             raise BoxError("job_not_found", "Trabalho inexistente.", 3)
         return dict(row)
 
+    def list(self, limit: int = 50) -> list:
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?",
+                              (max(1, int(limit)),)).fetchall()
+        return [dict(row) for row in rows]
+
     def enqueue(self, job_id, fingerprint, input_hash, input_path, source_name, config):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")

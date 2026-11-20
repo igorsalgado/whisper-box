@@ -14,7 +14,7 @@ class Parser(argparse.ArgumentParser):
 def main():
     parser = Parser(description="Whisper Box: transcrição local, sem API.")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "worker", "health"):
+    for name in ("prepare", "worker", "health", "painel"):
         commands.add_parser(name)
     submit_parser = commands.add_parser("submit")
     submit_parser.add_argument("--input", required=True, type=Path)
@@ -33,6 +33,10 @@ def main():
     elif args.command == "worker":
         from .worker import run
         run(settings)
+        return 0
+    elif args.command == "painel":
+        from .painel import serve
+        serve(settings)
         return 0
     elif args.command == "health":
         from .jobs import require_worker
