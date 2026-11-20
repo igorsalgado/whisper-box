@@ -70,6 +70,7 @@ Para parar tudo, use `python whisper-box.py stop`.
 | `saida/.partial/` | Tentativas incompletas; nunca são anunciadas como resultado. |
 | `entrada/<job_id>/` | Cópia da mídia enviada à fila. **Apagada automaticamente após a transcrição concluída e verificada** (padrão `delete`); veja “Limpeza e retenção”. |
 | `entrada/.gravacoes/` | Gravações do painel ainda não enviadas (arquivos `.part`). Cancelar ou transcrever as remove daqui; o que ficar abandonado por mais de 7 dias é removido pelo painel. |
+| `analises/<job_id>/analise.md` | Análise (resumo, decisões, tarefas) feita por um agente a partir do texto; fora de `saida/` e do Git. |
 | `modelos/` | Modelo, revisão e hashes. |
 | `.navegador/` | Perfil da janela do painel. |
 | Volume Docker `whisper-box_state` | Fila SQLite, trava do worker e sinal de saúde. |
@@ -94,7 +95,7 @@ Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, m
 
 ## Limitações
 
-- Sem identificação de falantes e sem resumo ou ata automáticos. A análise por agente (skill) ainda não está implementada; hoje você pode pedir a um agente que leia `transcricao.txt`.
+- Sem identificação de falantes e sem resumo ou ata automáticos no motor. A análise é feita por um agente, sob pedido, pela skill `whisper-box-analise` (ou pela receita do [AGENTS.md](AGENTS.md)): “resuma a reunião de ontem” gera `analises/<job_id>/analise.md`. A qualidade depende da transcrição automática.
 - A captura exige Chrome ou Edge; Firefox e Safari não capturam o áudio do sistema. No macOS, o áudio do sistema no navegador é limitado.
 - Uma gravação do painel tem no máximo 2 GiB. Fechar a janela no meio de uma gravação perde o que ainda não foi enviado (poucos segundos); o que já chegou fica em `entrada/.gravacoes/`.
 - A transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão. Fronteiras de cinco minutos podem dividir palavras. Silêncio gera texto vazio com `no_speech: true`; mídia sem áudio falha.
@@ -237,7 +238,11 @@ Responda ao usuário assim:
 > - Legendas SRT: `files.srt`
 > - Segmentos e metadados: `files.segments`, `files.metadata`
 
-Se o usuário pediu resumo, ata, decisões ou tarefas, leia `files.text` nessa etapa e cite horários da transcrição. Grave a análise fora de `saida/<job_id>/` (alterar arquivos ali invalida a verificação). Avise que a transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão.
+Se o usuário pediu resumo, ata, decisões ou tarefas, siga o passo seguinte. Avise sempre que a transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão.
+
+## Passo 6 — Analisar uma transcrição (sob pedido)
+
+Só quando o usuário pedir resumo, ata, decisões ou tarefas. No Claude Code use a skill `whisper-box-analise` (`.claude/skills/`); nos demais agentes siga a receita “Analisar transcrições” do [AGENTS.md](AGENTS.md). Em resumo: localize a reunião com `list --status succeeded --since AAAA-MM-DD --until AAAA-MM-DD` (pergunte se houver mais de uma candidata; trabalhos da CLI têm `source_name` `recording.<ext>`, então use data/hora e duração), leia apenas `files.text` desse job, cite horários `[hh:mm:ss]` de segmentos reais e grave em `analises/<job_id>/analise.md`, **nunca** em `saida/`. Confira com `python tests/check_analise.py` e com `result --job ID` (código 0).
 
 ## Erros e como agir
 

@@ -145,7 +145,7 @@ Escopo: [A03](actions/A03-contrato-do-motor.md), achados I1 a I6, comando `list`
 | `doctor` real | `ready: true`, `next_step: ask_for_recording`; com a imagem construída com o rótulo `whisper-box.source-digest`, `image_current` ok. |
 | `transcribe --input ""`, `--job ""`, `--job abc` | Código 3, um JSON `invalid_arguments`, stderr vazio no primeiro caso (sem traceback). |
 | `list --limit 3`, `list --since/--until 2026-11-19`, `list --limit 0` | JSON com trabalhos reais (sem texto da reunião), `{"jobs": []}` e código 3. |
-| `transcribe --input` real: WAV sintético de 4 s em `C:	mp`, nome com espaços e acento, gerado na imagem com `--network none` | Código 0 em cerca de 17 s, um JSON com `files` e `output_relative`, sem chamada `result` (uma execução de container a menos). |
+| `transcribe --input` real: WAV sintético de 4 s em `C:\tmp`, nome com espaços e acento, gerado na imagem com `--network none` | Código 0 em cerca de 17 s, um JSON com `files` e `output_relative`, sem chamada `result` (uma execução de container a menos). |
 | I6 no ambiente real: `saida/<job_id>` renomeada (não apagada), mesma mídia reenviada | `reused: false`, novo `job_id`; o antigo ficou `failed/output_lost` com registro preservado; o novo chegou a `succeeded`. A pasta original foi restaurada. |
 | Worker após `start` | `NetworkMode: none`, 2 CPUs e 4 GiB mantidos; worker e painel `healthy`. |
 
@@ -165,7 +165,7 @@ Escopo: [A04](actions/A04-retencao-e-limpeza-de-disco.md). Sem mudança de infer
 | Verificação | Resultado |
 | --- | --- |
 | Suíte no Docker sem rede | **142 testes aprovados** (118 antes): 22 novos de retenção, `purge`, `.partial`, staging e saúde do disco, mais 2 do wrapper. |
-| Ensaio real, `transcribe` de WAV sintético de 4 s (em `C:	mp`) | Código 0; `entrada/<job_id>` removida após o sucesso (log `input_removed`); `saida/.partial/` vazio; as 3 pastas de entrada do histórico real permaneceram. |
+| Ensaio real, `transcribe` de WAV sintético de 4 s (em `C:\tmp`) | Código 0; `entrada/<job_id>` removida após o sucesso (log `input_removed`); `saida/.partial/` vazio; as 3 pastas de entrada do histórico real permaneceram. |
 | Reenvio da mesma mídia depois da remoção | `reused: true`, mesmo `job_id`, sem nova pasta em `entrada/`. |
 | `purge --job` sem `--yes` / com `--yes` (só no job sintético) | Dry-run sem alterar nada; com `--yes` removeu saída e registro do job; `status` devolveu `job_not_found` (3). `job_id` malformado: `invalid_arguments` (3). |
 | `purge --older-than 0` (dry-run no histórico real) | Lista os jobs reais sem apagar nada. Nenhum `purge --yes` foi executado no histórico do usuário. |
@@ -180,6 +180,19 @@ Pendências e observações:
 - O aviso na aba Gravar e a linha “Disco” na aba Logs foram validados por teste da API (`disco`, `aviso_livre_bytes`) e revisão de código; o ensaio visual no navegador (por exemplo com `WHISPER_BOX_DISK_WARN_GIB=100000`) fica para o usuário.
 - A limpeza `<N>d` e a de staging foram cobertas por testes com datas simuladas, não por espera real.
 - Para voltar ao comportamento anterior (manter tudo): `WHISPER_BOX_INPUT_RETENTION=keep` no ambiente antes de `start`, ou trocar o padrão em `compose.yaml`.
+
+## Revisão de 20/11/2026 — skill de análise (A05)
+
+Escopo: [A05](actions/A05-skill-de-analise.md), decisão D2 (1 arquivo, `analises/<job_id>/analise.md`). Sem mudança no motor, no banco, no compose nem na imagem. Nenhum conteúdo de reunião foi lido ou registrado.
+
+| Verificação | Resultado |
+| --- | --- |
+| Testes do verificador de citações (`tests/test_analise.py`, transcrição sintética) | 8 testes aprovados, em contêiner `--network none` com a imagem existente e `tests/` montada somente leitura. |
+| Suíte completa nessa mesma execução | 126 testes aprovados (118 + 8). |
+| `list --status succeeded --limit 3` real | JSON com 3 trabalhos (somente metadados); o `list` atende à localização da skill. |
+| `git check-ignore` | `analises/` ignorada; `.claude/skills/whisper-box-analise/SKILL.md` não é ignorado. |
+
+Não ensaiado: uso real da skill por um agente (critérios 1, 5, 6 e as métricas de 9/10 pedidos e 5 análises), pois exige o Igor com transcrições reais e um agente interativo. Tarefa 7 (`analysis_path` em `list` e mount `ro` no `cli`) não foi entregue: era opcional e evita conflito de `compose.yaml` com a A04; o agente checa a pasta no host.
 
 ## Limites desta validação
 
