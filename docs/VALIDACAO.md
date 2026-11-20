@@ -109,9 +109,34 @@ Na mesma data, foram adicionados os comandos para agentes `doctor` (diagnóstico
 
 Os caminhos `install_docker`, `start_docker` e `prepare` do `doctor` foram validados somente com testes simulados. O ensaio completo com gravação real (`tests/smoke.py`) e a execução em host Linux/macOS não foram repetidos nesta revisão. O comportamento POSIX está coberto por testes unitários do wrapper e do mapeamento de caminhos.
 
+## Revisão de 20/11/2026 — painel web local e ajudante de host (A02/F3, adiantada)
+
+Escopo: serviço `painel` no Compose (`python -m whisper_box painel`), interface em `painel/`, API em [painel-api.md](painel-api.md) (revisões 1 e 2) e comando `python whisper-box.py painel` com ajudante de host. `start` passou a subir worker e painel e `stop` a parar os dois. Ambiente: Windows 11, Docker Desktop (engine Linux), Edge.
+
+| Verificação | Resultado |
+| --- | --- |
+| Suíte no Docker sem rede | **76 testes aprovados** (15 de jobs, 4 de pipeline, 39 do wrapper e 18 do painel). |
+| Fumaça do painel: WebM/Opus sintético de 3 s enviado em 4 pedaços, `transcrever`, espera | Trabalho chegou a `succeeded`; download do TXT pela API retornou `200`. |
+| Fumaça com o worker parado | `transcrever` devolveu `503` (`worker_unavailable`) e a gravação em `entrada/.gravacoes/` foi preservada para nova tentativa. |
+| `python whisper-box.py painel` real | Abriu o Edge em `--app`, com perfil próprio (`.navegador/`) e janela de 380×640; imprimiu `status: open` com `painel_url` e `ajudante_port`. |
+| Ajudante de host, preflight `OPTIONS` com origem do painel | `204` com `Access-Control-Allow-Origin` restrito à origem do painel. |
+| Ajudante com token errado | `403` (`token_invalido`). |
+| Ajudante com `Origin` estranha | `403` (`origem_invalida`). |
+| Worker após o `start` com painel | `NetworkMode: none` mantido; somente o painel usa a bridge própria. |
+| Validação visual da interface pelo usuário | O Igor usou o painel na janela do aplicativo e relatou que “ficou perfeito”. Registro de observação visual; não é medição. |
+
+**Bug encontrado e corrigido:** o `painel` retornava `browser_not_found` no Windows mesmo com o Edge instalado. A causa era procurar `ProgramFiles`, `ProgramFiles(x86)` e `LocalAppData` em uma cópia de `os.environ` (dicionário comum), cujas chaves ficam em maiúsculas no Windows. A busca agora ignora a caixa das chaves, e há teste cobrindo o caso.
+
+**Não validado nesta revisão:**
+
+- **Captura real de áudio do sistema e do microfone** (Chrome e Edge) seguida de transcrição. O teste da fumaça usou áudio sintético enviado pela API, não uma captura feita no navegador; a observação visual do usuário não substitui o critério 24 e 25 da A02. O ensaio manual de gravação real segue pendente.
+- Gravações longas (acima de alguns minutos) pelo painel, queda do navegador no meio da gravação e o limite de 2 GiB.
+- Linux e macOS como host (o ajudante usa `xdg-open` e `open`, cobertos somente por testes).
+- Fluxo de ponta a ponta com o Chrome.
+
 ## Limites desta validação
 
-- Sem GPU, interface web, diarização ou adaptador para um sistema de agente específico.
+- Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima), com a captura real ainda por validar.
 - Sem ensaio em Linux/macOS como host ou arquitetura ARM.
 - Sem teste de queda de energia, corrupção do volume ou restauração de backup.
 - Não há garantia de prazo ou precisão para outras gravações; ruído, duração de fala e carga concorrente alteram os resultados.

@@ -3,6 +3,7 @@
 Data: 12/11/2026
 Estado: implementada e validada em 12/11/2026; evidências em ../VALIDACAO.md
 Revisão: 19/11/2026 — wrapper de host migrado de PowerShell para Python (`whisper-box.py`) para suportar Windows, Linux e macOS; o `whisper-box.ps1` foi removido no mesmo dia, após a migração do helper do agents-framework.
+Ampliação: a [A02](A02-captura-ingestao-analise.md) (20/11/2026) amplia o escopo com um painel web local de gravação, `start` que também sobe o painel e o comando `painel`. O motor, a fila e o contrato da CLI desta action permanecem válidos.
 Projeto: Whisper Box (`whisper-box`)
 Destino pretendido: `igorsalgado/whisper-box` no GitHub
 
@@ -58,7 +59,7 @@ Essas evidências orientam o projeto; não constituem validação de uma impleme
 
 ### Fora do primeiro incremento
 
-- Interface web, API HTTP, MCP e integração específica com um agente ou sistema externo.
+- Interface web, API HTTP, MCP e integração específica com um agente ou sistema externo. *(Interface web e API HTTP local foram adicionadas depois, na A02.)*
 - Monitoramento automático de pastas; na A01 a entrada ocorre por submissão explícita.
 - Captura de reuniões ao vivo, identificação de falantes e extração de imagens do vídeo.
 - Resumos, atas, decisões e tarefas produzidos por modelos de linguagem.
@@ -135,7 +136,9 @@ python whisper-box.py status --job "<job_id>"
 python whisper-box.py result --job "<job_id>"
 ```
 
-Revisão de 19/11/2026: para agentes, `doctor` diagnostica o host e indica um `next_step`, e `transcribe --input`/`--job` encapsula start, submit, espera e resultado em um único comando. O roteiro do agente está no `README.md`, escrito como prompt operacional.
+Revisão de 20/11/2026: `start` agora sobe worker e painel (`{"status":"ready","painel_url":...}`) e `stop` para os dois; o comando `painel` abre a interface para o humano (ver A02).
+
+Revisão de 19/11/2026: para agentes, `doctor` diagnostica o host e indica um `next_step`, e `transcribe --input`/`--job` encapsula start, submit, espera e resultado em um único comando. O roteiro do agente está na seção “Para agentes” do `README.md`, escrito como prompt operacional.
 
 ### Regras da interface
 
@@ -192,7 +195,7 @@ Exemplo ilustrativo de resposta final, com identificador e caminho substituídos
 ## 7. Offline, desempenho e dados locais
 
 - `prepare` verifica a integridade/completude do modelo e registra sua revisão. O runtime carrega por caminho local e falha claramente se o modelo estiver ausente.
-- Worker e comandos de trabalho operam com `network_mode: none`. Somente a etapa explícita de preparação tem rede.
+- Worker e comandos de trabalho operam com `network_mode: none`. Somente a etapa explícita de preparação tem rede. *(Desde a A02, o serviço `painel` também tem rede, em bridge própria e só em `127.0.0.1`; o worker e a CLI seguem sem rede.)*
 - A imagem pronta não instala pacotes ao iniciar nem exige chaves de APIs.
 - Modelo carregado uma vez por execução do worker. Reiniciar o worker pode recarregá-lo do disco, sem download.
 - Primeiro perfil: `small`, CPU, `int8`, duas threads, um worker, português, `beam_size=5`, VAD e `condition_on_previous_text=False`, preservando a configuração de referência até medir qualidade.
