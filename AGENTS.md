@@ -4,6 +4,18 @@
 
 A seção “Para agentes” do [README.md](README.md) é o prompt operacional completo: missão, regras, passos (`doctor` → corrigir ambiente → pedir a gravação → `transcribe`), erros e referência de comandos. Siga-a quando o usuário pedir uma transcrição. A parte “Para quem usa” do mesmo arquivo é o guia humano (instalação, painel).
 
+## Analisar transcrições
+
+Receita para qualquer agente (o Claude Code tem a skill `.claude/skills/whisper-box-analise/SKILL.md`, equivalente). Só sob pedido do usuário. A análise é do **texto**: o áudio nunca é enviado, nenhum serviço externo é usado, só a transcrição pedida é lida e ela não é colada inteira na conversa. Nunca escreva em `saida/`.
+
+1. **Localizar:** converta o pedido em intervalo de datas no fuso local e rode `python whisper-box.py list --status succeeded --since AAAA-MM-DD --until AAAA-MM-DD` (stdout é JSON). Escolha por `created_at`/`started_at` e `duration_seconds`. Trabalhos enviados pela CLI têm `source_name` `recording.<ext>`, que não identifica a reunião.
+2. **Desambiguar:** com mais de um candidato plausível, pergunte ao usuário (data/hora, `source_name`, duração). Nunca adivinhe; sem candidatos, diga e sugira ampliar o intervalo.
+3. **Ler** só `files.text` do job escolhido (transcrições longas: por faixas de linhas ou `segmentos.jsonl`).
+4. **Gerar** `analise.md`: cabeçalho (título, `job_id`, `source_name`, início, duração, data da análise, aviso de transcrição automática); **Resumo** (3 a 6 linhas); **Decisões** (cada item termina com `[hh:mm:ss]`); **Tarefas** (tabela `Tarefa | Responsável | Prazo | Horário`; o que não foi dito é “não informado”, nada inventado); **Pontos em aberto** (com horário). Horário citado é o **início** de um segmento existente em `transcricao.txt`.
+5. **Gravar** em `analises/<job_id>/analise.md` (pasta ignorada pelo Git). Se já existir, pergunte se sobrescreve ou grava `analise-AAAAMMDD-HHMM.md`.
+6. **Verificar:** `python tests/check_analise.py --analise analises/JOB_ID/analise.md --transcricao saida/JOB_ID/transcricao.txt` (código 0) e `python whisper-box.py result --job JOB_ID` (código 0, `saida/` intacta).
+7. **Responder** com o caminho, um resumo curto e o aviso de que a transcrição é automática.
+
 ## Desenvolver (alterar o projeto)
 
 ### Princípios gerais

@@ -158,6 +158,19 @@ Decisões e desvios:
 - **Observação (fora do escopo):** `submit` pelo wrapper monta o arquivo como `/source/recording.<ext>`; por isso `source_name` dos trabalhos enviados pela CLI é `recording.<ext>` e não o nome original.
 - A captura real de áudio pelo painel (Chrome/Edge, sistema e microfone) foi validada pelo usuário em 20/11/2026 (“todas as funcionalidades estão ok”); isso é registro de aceite do usuário, não medição.
 
+## Revisão de 20/11/2026 — skill de análise (A05)
+
+Escopo: [A05](actions/A05-skill-de-analise.md), decisão D2 (1 arquivo, `analises/<job_id>/analise.md`). Sem mudança no motor, no banco, no compose nem na imagem. Nenhum conteúdo de reunião foi lido ou registrado.
+
+| Verificação | Resultado |
+| --- | --- |
+| Testes do verificador de citações (`tests/test_analise.py`, transcrição sintética) | 8 testes aprovados, em contêiner `--network none` com a imagem existente e `tests/` montada somente leitura. |
+| Suíte completa nessa mesma execução | 126 testes aprovados (118 + 8). |
+| `list --status succeeded --limit 3` real | JSON com 3 trabalhos (somente metadados); o `list` atende à localização da skill. |
+| `git check-ignore` | `analises/` ignorada; `.claude/skills/whisper-box-analise/SKILL.md` não é ignorado. |
+
+Não ensaiado: uso real da skill por um agente (critérios 1, 5, 6 e as métricas de 9/10 pedidos e 5 análises), pois exige o Igor com transcrições reais e um agente interativo. Tarefa 7 (`analysis_path` em `list` e mount `ro` no `cli`) não foi entregue: era opcional e evita conflito de `compose.yaml` com a A04; o agente checa a pasta no host.
+
 ## Limites desta validação
 
 - Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima) e a captura real foi aprovada pelo usuário na mesma data.
