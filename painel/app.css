@@ -70,6 +70,7 @@ code,pre,.cmd{font-family:ui-monospace,Consolas,monospace}
 .confirm{display:flex;flex-direction:column;gap:var(--s3)}
 .confirm p{font-size:14px;font-weight:600}
 .dica{font-size:12.5px;line-height:1.35;color:var(--muted);max-width:300px;overflow-wrap:anywhere}
+.aviso-disco{background:var(--warn-bg);border:1px solid var(--warn-bd);border-radius:8px;padding:6px 10px;color:inherit}
 
 /* tela Transcrições */
 .lista{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s2)}

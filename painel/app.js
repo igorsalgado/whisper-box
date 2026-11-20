@@ -219,6 +219,22 @@ function renderAviso() {
   aviso.append(icon('alert', 16), t);
   aviso.hidden = false;
 }
+function fmtBytes(n) {
+  const gb = n / 1024 ** 3;
+  if (gb >= 1) return gb.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' GB';
+  return Math.max(0, Math.round(n / 1024 ** 2)).toLocaleString('pt-BR') + ' MB';
+}
+function discoBaixo() {
+  const d = saude && saude.disco;
+  return !!d && typeof d.livre_bytes === 'number' && typeof d.aviso_livre_bytes === 'number' && d.livre_bytes < d.aviso_livre_bytes;
+}
+function renderDiscoAviso() {
+  const el = $('discoAviso');
+  if (!el) return;
+  const mostrar = discoBaixo() && state === 'ocioso';
+  el.hidden = !mostrar;
+  if (mostrar) el.textContent = 'Pouco espaço em disco: ' + fmtBytes(saude.disco.livre_bytes) + ' livres. Libere espaço antes de gravar uma reunião longa.';
+}
 async function checkSaude() {
   if (Demo.ativo) { saude = { painel: true, worker: true, modelo: true }; renderAviso(); if (currentRoute === 'logs') renderDiag(); return; }
   try {
@@ -229,6 +245,7 @@ async function checkSaude() {
     log('Falha ao consultar /api/saude', e.message);
   }
   renderAviso();
+  renderDiscoAviso();
   if (currentRoute === 'logs') renderDiag();
 }
 
@@ -309,6 +326,7 @@ function renderRec() {
   el.timer.textContent = fmtClock(elapsedSec());
   el.timer.classList.toggle('pausa', state === 'pausado');
   $('dica').hidden = !(state === 'ocioso' && mostrarDica());
+  renderDiscoAviso();
   updateNav();
   updateTitle();
 
@@ -848,6 +866,9 @@ function diagRows() {
     ['Captura', 'Seguro ' + tick2(window.isSecureContext) + ' · getDisplayMedia ' + tick2(gdm) + ' · MediaRecorder ' + tick2(typeof MediaRecorder !== 'undefined')],
     ['Gravador', diagData.mime ? diagData.mime + (diagData.sr ? ' · ' + diagData.sr : '') : '—'],
     ['Faixas', 'sistema: ' + (diagData.sysTracks || '—') + '; microfone: ' + (diagData.micTracks || '—')],
+    ['Disco', saude && saude.disco && typeof saude.disco.livre_bytes === 'number'
+      ? fmtBytes(saude.disco.livre_bytes) + ' livres · entrada ' + fmtBytes(saude.disco.entrada_bytes || 0) + ' · saída ' + fmtBytes(saude.disco.saida_bytes || 0)
+      : '—'],
     ['Ajudante', helper.porta ? 'configurado (porta ' + helper.porta + ')' : 'não configurado']
   ];
 }

@@ -43,6 +43,8 @@ services:
     environment:
       <<: *environment
       WHISPER_BOX_PAINEL_PORT: ${WHISPER_BOX_PAINEL_PORT:-8765}
+      WHISPER_BOX_STAGING_DAYS: ${WHISPER_BOX_STAGING_DAYS:-7}
+      WHISPER_BOX_DISK_WARN_GIB: ${WHISPER_BOX_DISK_WARN_GIB:-5}
     volumes:
       - state:/state
       - ./entrada:/input
@@ -73,6 +75,10 @@ services:
     <<: *runtime
     build: .
     command: [worker]
+    environment:
+      <<: *environment
+      # A04: delete (padrao, decisao D1) apaga entrada/<job_id>/ apos sucesso verificado; keep ou <N>d.
+      WHISPER_BOX_INPUT_RETENTION: ${WHISPER_BOX_INPUT_RETENTION:-delete}
     cpus: 2
     mem_limit: 4g
     memswap_limit: 4g

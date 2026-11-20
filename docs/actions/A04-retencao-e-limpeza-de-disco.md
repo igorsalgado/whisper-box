@@ -1,7 +1,7 @@
 # A04 — Retenção e limpeza de disco
 
 Data: 20/11/2026
-Estado: pronta para execução; **a política padrão depende de decisão do Igor** (seção 4)
+Estado: **implementada em 20/11/2026** (D1 resolvida: padrão `delete`; evidências em [VALIDACAO.md](../VALIDACAO.md)). Desvios: `--inputs-only` no `purge`; retenção só vale para jobs concluídos após a ativação (`state/retention.json`), preservando o histórico anterior
 Prioridade: 2
 Tamanho: M (uma sessão de um agente `dev-backend`, com um ajuste pequeno de `dev-frontend`)
 Projeto: Whisper Box (`whisper-box`)

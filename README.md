@@ -68,13 +68,22 @@ Para parar tudo, use `python whisper-box.py stop`.
 | --- | --- |
 | `saida/<job_id>/` | `transcricao.txt` (texto com horários), `transcricao.srt`, `segmentos.jsonl`, `metadados.json` e `manifest.json` (hashes de integridade). |
 | `saida/.partial/` | Tentativas incompletas; nunca são anunciadas como resultado. |
-| `entrada/<job_id>/` | Cópia da mídia enviada à fila. |
-| `entrada/.gravacoes/` | Gravações do painel ainda não enviadas (arquivos `.part`). Cancelar ou transcrever as remove daqui. |
+| `entrada/<job_id>/` | Cópia da mídia enviada à fila. **Apagada automaticamente após a transcrição concluída e verificada** (padrão `delete`); veja “Limpeza e retenção”. |
+| `entrada/.gravacoes/` | Gravações do painel ainda não enviadas (arquivos `.part`). Cancelar ou transcrever as remove daqui; o que ficar abandonado por mais de 7 dias é removido pelo painel. |
 | `modelos/` | Modelo, revisão e hashes. |
 | `.navegador/` | Perfil da janela do painel. |
 | Volume Docker `whisper-box_state` | Fila SQLite, trava do worker e sinal de saúde. |
 
-Não há limpeza automática de `entrada/` e `saida/`. Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, mas a remoção pode exigir `sudo`. Gravações, transcrições, modelos, logs e estado ficam fora do Git.
+### Limpeza e retenção
+
+- **Cópia de entrada (padrão: apagar):** depois que a transcrição termina e o resultado é verificado (`manifest.json` com hashes), o worker apaga `entrada/<job_id>/` e mantém `saida/<job_id>/`. **Para gravações feitas no painel, essa cópia era o único exemplar do áudio: depois da transcrição ele deixa de existir.** Para arquivos enviados pela linha de comando, o original continua intacto onde estava. Transcrições com falha mantêm a entrada. Reenviar a mesma mídia continua devolvendo o trabalho existente (`reused: true`).
+- **Configurar:** `WHISPER_BOX_INPUT_RETENTION` (lida pelo worker): `delete` (padrão), `keep` (nunca apaga) ou `<N>d` (por exemplo `7d`: apaga as cópias de trabalhos concluídos há mais de N dias, verificadas, a cada hora). Defina antes de `python whisper-box.py start`; valor inválido equivale a `keep`. A retenção só vale para trabalhos concluídos depois que ela foi ativada neste clone; o histórico anterior é limpo só por `purge`.
+- **Resíduos técnicos (automático):** `saida/.partial/` é esvaziado ao iniciar o worker e após falha; gravações abandonadas em `entrada/.gravacoes/` somem após `WHISPER_BOX_STAGING_DAYS` dias (padrão 7).
+- **Remoção explícita:** `python whisper-box.py purge --job ID` (ou `--older-than DIAS [--status failed|succeeded]`) **só lista** o que seria removido; para apagar de fato acrescente `--yes`. Remove a entrada, a saída, os parciais e o registro do trabalho. `--inputs-only` remove apenas a cópia de entrada e mantém a transcrição. Trabalhos na fila ou em processamento são recusados (`job_active`).
+- **Espaço em disco:** a aba **Logs** mostra o espaço livre; a aba **Gravar** avisa quando há menos de `WHISPER_BOX_DISK_WARN_GIB` GiB livres (padrão 5), sem impedir a gravação.
+- `saida/` nunca é apagada automaticamente.
+
+Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, mas a remoção pode exigir `sudo`. Gravações, transcrições, modelos, logs e estado ficam fora do Git.
 
 ## Privacidade e segurança
 
@@ -116,11 +125,12 @@ O projeto já contém o motor (faster-whisper `small`, CPU, `int8`, português p
 2. Peça permissão ao usuário antes de instalar software no sistema (Python, Docker) e antes do download inicial (`prepare`).
 3. **Captura e transcrição são locais:** nunca envie a gravação (áudio ou vídeo) para fora da máquina nem use APIs de transcrição em nuvem. A **análise do texto** (resumo, ata, decisões, tarefas) por você, o agente do usuário, é permitida: é uma decisão deste projeto pessoal. Leia a transcrição somente quando o usuário pedir essa análise e use apenas o conteúdo necessário.
 4. Não mova, renomeie ou apague o arquivo original do usuário.
-5. Não rode `docker compose down -v` e não apague `entrada/`, `saida/`, `modelos/` ou volumes para “corrigir” falhas.
+5. Não rode `docker compose down -v` e não apague `entrada/`, `saida/`, `modelos/` ou volumes para “corrigir” falhas. A limpeza de disco é feita só por `purge` (regra 10) e pela retenção automática.
 6. Não rode `prepare` a cada reunião; ele é feito uma única vez.
 7. Leia stdout como JSON e stderr como diagnóstico, em canais separados. Nunca use `2>&1` ao interpretar a resposta.
 8. Não cole a transcrição na conversa, a menos que o usuário peça resumo, ata ou análise.
 9. Não suba o painel (`painel`) por conta própria: ele é a interface do humano e bloqueia até a janela fechar. Rode-o somente se o usuário pedir, em segundo plano.
+10. **`purge --yes` só a pedido explícito do usuário.** Apaga entrada, saída e registro de forma irreversível. Em qualquer outro caso use apenas `purge` sem `--yes` (dry-run, que não altera nada) e mostre o resultado. Nunca use `purge` para “corrigir” falhas.
 
 ## Passo 0 — Obter o projeto
 
@@ -261,6 +271,7 @@ Todos são `python whisper-box.py COMANDO` e escrevem um único JSON em stdout (
 | `doctor` | Diagnostica Python, Docker, Compose, engine, imagem e modelo; indica um `next_step`. Código 0 quando pronto, 1 caso contrário. |
 | `transcribe --input CAMINHO` | Fluxo completo: start do worker, submit, espera renovada e resultado verificado. Aceita `--language` (`pt`, `en`, `es`, `auto`; padrão `pt`) e `--timeout-seconds`. |
 | `transcribe --job ID` | Retoma um trabalho existente, sem submeter de novo (não aceita `--language`). |
+| `purge --job ID [--yes]` / `purge --older-than DIAS [--status S] [--yes]` | Remove trabalhos (entrada, saída, parciais e registro). **Sem `--yes`, apenas lista** `{"dry_run": true, "would_purge": [...], "freed_bytes": N}`; com `--yes` apaga e devolve `{"dry_run": false, "purged": [...], "freed_bytes": N}`. `--inputs-only` limita a remoção à cópia de entrada. Recusa `queued`/`running` (`job_active`, 3), `job_id` malformado e job inexistente (`job_not_found`, 3); falha parcial devolve `errors` e código 1. |
 | `prepare` | Uma vez, com internet: constrói a imagem (saída do build em stderr) e baixa/verifica o modelo. Preserva a revisão já instalada. Um único JSON em stdout, inclusive em falha. |
 | `start` | Sobe worker **e painel**. Devolve `{"status":"ready","painel_url":"http://127.0.0.1:8765/"}`. Se só o painel falhar, devolve `painel_error` no lugar de `painel_url`; o código de saída segue o do worker. |
 | `stop` | Para worker e painel; fila, modelo e arquivos são preservados. Devolve `{"status":"stopped"}`. |
@@ -273,7 +284,7 @@ Todos são `python whisper-box.py COMANDO` e escrevem um único JSON em stdout (
 
 Estados: `queued`, `running`, `succeeded`, `failed`. `progress_seconds` é a posição processada no áudio, não uma previsão de término. O campo `error` só aparece em `failed`; um trabalho recolocado na fila após interrupção do worker não o traz.
 
-Variáveis de ambiente: `WHISPER_BOX_PAINEL_PORT` (porta do painel, padrão 8765), `WHISPER_BOX_AJUDANTE_PORT` (padrão 8766), `WHISPER_BOX_NAVEGADOR` (executável do navegador).
+Variáveis de ambiente: `WHISPER_BOX_INPUT_RETENTION` (`delete` padrão, `keep` ou `<N>d`; lida pelo worker ao iniciar), `WHISPER_BOX_STAGING_DAYS` (gravações abandonadas do painel, padrão 7), `WHISPER_BOX_DISK_WARN_GIB` (aviso de pouco espaço, padrão 5), `WHISPER_BOX_PAINEL_PORT` (porta do painel, padrão 8765), `WHISPER_BOX_AJUDANTE_PORT` (padrão 8766), `WHISPER_BOX_NAVEGADOR` (executável do navegador).
 
 ### Garantias do sistema
 

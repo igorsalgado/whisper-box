@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -58,9 +59,28 @@ def timestamp(seconds: float, srt: bool = False) -> str:
 
 
 def transcribe(settings: Settings, job: dict, model, progress):
-    config = json.loads(job["config"])
-    temporary = settings.outputs / ".partial" / job["id"] / str(job["attempts"])
+    """Produz a saída em saida/.partial e a publica; não deixa resíduo em falha ou interrupção."""
+    parent = settings.outputs / ".partial" / job["id"]
+    temporary = parent / str(job["attempts"])
     temporary.mkdir(parents=True, exist_ok=False)
+    try:
+        _produce(settings, job, model, progress, temporary)
+    except BaseException:  # inclui SystemExit do SIGTERM
+        shutil.rmtree(temporary, ignore_errors=True)
+        _remove_if_empty(parent)
+        raise
+    _remove_if_empty(parent)
+
+
+def _remove_if_empty(directory: Path):
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
+
+
+def _produce(settings: Settings, job: dict, model, progress, temporary: Path):
+    config = json.loads(job["config"])
     started = time.monotonic()
     duration = vad_duration = 0.0
     count = 0

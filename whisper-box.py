@@ -27,14 +27,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-COMMANDS = "doctor, prepare, start, stop, painel, transcribe, submit, status, wait, result, list ou logs"
-JOB_COMMANDS = ("status", "wait", "result", "list")
+COMMANDS = "doctor, prepare, start, stop, painel, transcribe, submit, status, wait, result, list, purge ou logs"
+JOB_COMMANDS = ("status", "wait", "result", "list", "purge")
 LIFECYCLE_COMMANDS = ("start", "stop")
 ARTIFACTS = ("text", "srt", "segments", "metadata")
 IMAGE = "whisper-box:local"
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 RETRY_DELAYS = (2, 5)  # esperas (s) das novas tentativas após falha transitória do Docker
 JOB_TIMEOUT = 120  # status, result, list
+PURGE_TIMEOUT = 900  # purge pode apagar muitos arquivos
 SUBMIT_TIMEOUT = 3600  # cópia de até 2 GiB
 START_TIMEOUT = 300
 PREPARE_TIMEOUT = 3600
@@ -765,6 +766,8 @@ def main(argv: list, out=None) -> int:
             rest = rest + ["--utc-offset-minutes", str(local_offset_minutes())]
         elif command == "wait":
             timeout = wait_timeout(rest) + 60
+        elif command == "purge":
+            timeout = PURGE_TIMEOUT
         code = run_cli(compose + job_arguments(command, rest, name), env, out, timeout, name, job_from(rest))
     else:
         print(error_json("invalid_arguments", "Comando desconhecido. Use " + COMMANDS + "."), file=out)

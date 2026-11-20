@@ -116,9 +116,32 @@ class PainelTest(unittest.TestCase):
 
     # -- gravação --------------------------------------------------------
     def test_health_reflects_worker_and_model(self):
-        self.assertEqual(self.call('GET', '/api/saude')[1], {'painel': 'ok', 'worker': True, 'modelo': True})
+        body = self.call('GET', '/api/saude')[1]
+        self.assertEqual({k: body[k] for k in ('painel', 'worker', 'modelo')},
+                         {'painel': 'ok', 'worker': True, 'modelo': True})
         self.heartbeat(False)
-        self.assertEqual(self.call('GET', '/api/saude')[1], {'painel': 'ok', 'worker': False, 'modelo': True})
+        body = self.call('GET', '/api/saude')[1]
+        self.assertEqual({k: body[k] for k in ('painel', 'worker', 'modelo')},
+                         {'painel': 'ok', 'worker': False, 'modelo': True})
+
+    def test_health_reports_disk_usage(self):
+        (self.settings.inputs / 'x').mkdir()
+        (self.settings.inputs / 'x' / 'a.bin').write_bytes(b'12345')
+        disk = self.call('GET', '/api/saude')[1]['disco']
+        self.assertGreater(disk['livre_bytes'], 0)
+        self.assertGreaterEqual(disk['total_bytes'], disk['livre_bytes'])
+        self.assertEqual(disk['entrada_bytes'], 5)
+        self.assertEqual(disk['saida_bytes'], 0)
+        self.assertEqual(disk['aviso_livre_bytes'], 5 * 1024 ** 3)
+        with patch.dict('os.environ', {'WHISPER_BOX_DISK_WARN_GIB': '100000'}):
+            self.assertEqual(self.call('GET', '/api/saude')[1]['disco']['aviso_livre_bytes'],
+                             100000 * 1024 ** 3)
+
+    def test_health_omits_disk_when_unreadable(self):
+        with patch('whisper_box.painel.shutil.disk_usage', side_effect=OSError):
+            status, body = self.call('GET', '/api/saude')
+        self.assertEqual(status, 200)
+        self.assertNotIn('disco', body)
 
     def test_chunks_in_sequence_idempotent_resend_and_order_check(self):
         recording_id = self.create()

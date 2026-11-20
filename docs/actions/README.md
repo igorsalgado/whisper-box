@@ -11,7 +11,7 @@ Atualizado em 20/11/2026 (HEAD `7eec6ec`). Cada action é um documento autossufi
 | [A01](A01-transcricao-offline-docker.md) | Transcrição offline com Docker, fila, CLI e wrapper | **Concluída** e validada em 12/11/2026 (revisões de 19 e 20/11) | — | — |
 | [A02](A02-captura-ingestao-analise.md) | Captura, ingestão e análise | **F3 (painel) concluída e validada pelo usuário em 20/11/2026** (captura de áudio do sistema e microfone no Edge; gravar, transcrever e abrir pasta). F0, F1, F2 e F4 redistribuídas (abaixo) | — | — |
 | [A03](A03-contrato-do-motor.md) | Contrato do motor (ex-F0): I1 a I6, `list`, robustez do wrapper | **Concluída** em 20/11/2026 (`dda345f`; 118 testes, transcribe real com código 0) | — | — |
-| [A04](A04-retencao-e-limpeza-de-disco.md) | Retenção, `purge`, limpeza de `.partial` e staging, espaço livre | **Em execução**; D1 resolvida (apagar a cópia de entrada após sucesso verificado) | 1 | M |
+| [A04](A04-retencao-e-limpeza-de-disco.md) | Retenção, `purge`, limpeza de `.partial` e staging, espaço livre | **Implementada em 20/11/2026** (142 testes; padrão `delete` por D1; aguarda integração/commit) | 1 | M |
 | [A05](A05-skill-de-analise.md) | Skill de análise de transcrições (ex-F1) | **Em execução** (D2: 1 arquivo, padrão recomendado) | 1 | S/M |
 | [A06](A06-desempenho-e-robustez-do-motor.md) | Desempenho e robustez: threads/CPU, `exec`, observabilidade, checkpoint condicional | Pronta (medir antes de mudar) | 2 | M/L |
 | [A07](A07-endurecimento-e-operacao.md) | Endurecimento, CI, consentimento, fronteiras de bloco, ensaios da F3 | Opcional, em blocos independentes | 3 | M |

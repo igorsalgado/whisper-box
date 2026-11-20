@@ -102,6 +102,22 @@ class Store:
             )
         return job_id, False
 
+    def delete(self, job_id: str) -> bool:
+        """Remove o registro de um job não ativo (usado só pelo purge).
+
+        Sob BEGIN IMMEDIATE, serializado com `claim`: job `queued`/`running` levanta `job_active`.
+        Devolve False se o registro não existe.
+        """
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                return False
+            if row["status"] in ("queued", "running"):
+                raise BoxError("job_active", "O trabalho está na fila ou em processamento; aguarde terminar.", 3)
+            db.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        return True
+
     def claim(self):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")

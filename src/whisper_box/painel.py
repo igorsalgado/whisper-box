@@ -24,9 +24,14 @@ from urllib.parse import unquote
 from . import jobs
 from .config import BoxError, Settings
 from .model import read_manifest
+from .retention import tree_bytes
 from .store import Store
 
 INTERNAL_PORT = 8765
+STAGING_DAYS_DEFAULT = 7
+DISK_WARN_GIB_DEFAULT = 5
+SWEEP_INTERVAL = 3600
+SIZE_CACHE_SECONDS = 60
 CHUNK_LIMIT = 16 * 1024 * 1024
 RECORDING_LIMIT = 2 * 1024 ** 3
 JSON_LIMIT = 4096
@@ -172,6 +177,51 @@ class Gravacoes:
         with self._guard:
             self._locks.pop(recording_id, None)
 
+    def cleanup(self, days: float, now: float = None) -> dict:
+        """Remove staging abandonado: gravações cujo item mais recente é mais antigo que `days`.
+
+        Atividade recente (pedaços chegando, meta atualizado) mantém a gravação; usa o lock por
+        gravação e nunca toca em entrada/<job_id>/.
+        """
+        cutoff = (time.time() if now is None else now) - days * 86400
+        groups = {}
+        for entry in self.root.iterdir():
+            name = re.sub(r"\.(part|meta\.tmp|meta)$", "", entry.name)
+            if re.fullmatch(ID_PATTERN, name):
+                groups.setdefault(name, []).append(entry)
+        removed = freed = 0
+        for recording_id, entries in groups.items():
+            if self._newest(entries) >= cutoff:
+                continue
+            with self._lock(recording_id):
+                entries = [e for e in entries if e.exists() or e.is_symlink()]
+                if not entries or self._newest(entries) >= cutoff:
+                    continue
+                freed += sum(tree_bytes(e) for e in entries)
+                for entry in entries:
+                    if entry.is_dir() and not entry.is_symlink():
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        entry.unlink(missing_ok=True)
+                removed += 1
+            with self._guard:
+                self._locks.pop(recording_id, None)
+        return {"removed": removed, "bytes": freed}
+
+    @staticmethod
+    def _newest(entries) -> float:
+        newest = 0.0
+        for entry in entries:
+            try:
+                newest = max(newest, entry.lstat().st_mtime)
+                if entry.is_dir() and not entry.is_symlink():
+                    for root, dirs, files in os.walk(entry):
+                        for name in dirs + files:
+                            newest = max(newest, os.lstat(os.path.join(root, name)).st_mtime)
+            except OSError:
+                newest = max(newest, time.time())  # incerto: tratar como recente
+        return newest
+
     def transcribe(self, recording_id: str, language: str) -> dict:
         if language not in LANGUAGES:
             raise BoxError("invalid_language", "Use pt, en, es ou auto.", 3)
@@ -215,7 +265,34 @@ class PainelServer(ThreadingHTTPServer):
         self.hosts = {f"127.0.0.1:{public_port}", f"localhost:{public_port}"}
         self.origins = {"http://" + host for host in self.hosts}
         self.gravacoes = Gravacoes(settings, submit)
+        self._sizes = None  # (instante, entrada_bytes, saida_bytes)
+        self._sizes_lock = threading.Lock()
         super().__init__(address, Handler)
+
+
+    def disk(self):
+        """Estado do disco para /api/saude; None se não for mensurável (nunca falha a saúde)."""
+        try:
+            usage = shutil.disk_usage(self.settings.inputs)
+            with self._sizes_lock:
+                if self._sizes is None or time.monotonic() - self._sizes[0] > SIZE_CACHE_SECONDS:
+                    self._sizes = (time.monotonic(), tree_bytes(self.settings.inputs),
+                                   tree_bytes(self.settings.outputs))
+                _, entrada, saida = self._sizes
+            return {"livre_bytes": usage.free, "total_bytes": usage.total,
+                    "entrada_bytes": entrada, "saida_bytes": saida,
+                    "aviso_livre_bytes": int(env_number("WHISPER_BOX_DISK_WARN_GIB",
+                                                        DISK_WARN_GIB_DEFAULT) * 1024 ** 3)}
+        except (OSError, ValueError):
+            return None
+
+
+def env_number(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name) or default)
+        return value if value >= 0 else default
+    except ValueError:
+        return default
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -389,7 +466,11 @@ class Handler(BaseHTTPRequestHandler):
             model = True
         except BoxError:
             model = False
-        self._json(200, {"painel": "ok", "worker": worker, "modelo": model})
+        body = {"painel": "ok", "worker": worker, "modelo": model}
+        disk = self.server.disk()
+        if disk is not None:
+            body["disco"] = disk
+        self._json(200, body)
 
     def _criar(self):
         mime = self._read_json().get("mime")
@@ -504,8 +585,16 @@ def serve(settings: Settings):
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
     thread.start()
     log("painel_ready", port=INTERNAL_PORT, public_port=public_port)
+    days = env_number("WHISPER_BOX_STAGING_DAYS", STAGING_DAYS_DEFAULT)
     try:
-        stop.wait()
+        while not stop.is_set():
+            try:
+                result = server.gravacoes.cleanup(days)
+                if result["removed"]:
+                    log("staging_cleaned", removed=result["removed"], bytes_freed=result["bytes"])
+            except Exception as exc:  # limpeza nunca derruba o painel
+                log("staging_cleanup_failed", exception_type=type(exc).__name__)
+            stop.wait(SWEEP_INTERVAL)
     finally:
         server.shutdown()
         server.server_close()

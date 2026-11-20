@@ -791,5 +791,23 @@ class ListCommandTest(CallMixin, unittest.TestCase):
             self.assertEqual(wrapper.local_offset_minutes(), 0)
 
 
+class PurgeCommandTest(CallMixin, unittest.TestCase):
+    def test_purge_passes_arguments_through_to_the_cli_without_yes_by_default(self):
+        body = b'{"dry_run": true, "would_purge": [], "freed_bytes": 0}'
+        code, lines, calls = self.call(['purge', '--older-than', '30', '--status', 'failed'],
+                                       [completed(0, body)])
+        self.assertEqual((code, lines), (0, [body.decode()]))
+        arguments = calls[0][0]
+        self.assertEqual(arguments[arguments.index('purge'):],
+                         ['purge', '--older-than', '30', '--status', 'failed'])
+        self.assertNotIn('--yes', arguments)
+        self.assertIn('cli', arguments)
+
+    def test_purge_errors_keep_exit_code_and_single_json(self):
+        body = b'{"error": {"code": "job_active", "message": "ativo"}}'
+        code, lines, _ = self.call(['purge', '--job', 'a' * 32, '--yes'], [completed(3, body)])
+        self.assertEqual((code, len(lines)), (3, 1))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -41,6 +41,12 @@ def main():
     list_parser.add_argument("--until", type=date_argument)
     list_parser.add_argument("--limit", type=int, default=20)
     list_parser.add_argument("--utc-offset-minutes", type=int, default=0)
+    purge_parser = commands.add_parser("purge")
+    purge_parser.add_argument("--job")
+    purge_parser.add_argument("--older-than", type=int)
+    purge_parser.add_argument("--status")
+    purge_parser.add_argument("--inputs-only", action="store_true")
+    purge_parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
     settings = Settings.from_env()
     code = 0
@@ -66,6 +72,10 @@ def main():
         from .jobs import list_jobs
         response = list_jobs(settings, args.status, args.since, args.until, args.limit,
                              args.utc_offset_minutes)
+    elif args.command == "purge":
+        from .retention import purge
+        response, code = purge(settings, args.job, args.older_than, args.status, args.yes,
+                               args.inputs_only)
     elif args.command == "wait":
         from .jobs import wait
         response, code = wait(settings, args.job, args.timeout)

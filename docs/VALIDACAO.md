@@ -158,6 +158,29 @@ Decisões e desvios:
 - **Observação (fora do escopo):** `submit` pelo wrapper monta o arquivo como `/source/recording.<ext>`; por isso `source_name` dos trabalhos enviados pela CLI é `recording.<ext>` e não o nome original.
 - A captura real de áudio pelo painel (Chrome/Edge, sistema e microfone) foi validada pelo usuário em 20/11/2026 (“todas as funcionalidades estão ok”); isso é registro de aceite do usuário, não medição.
 
+## Revisão de 20/11/2026 — retenção e limpeza de disco (A04)
+
+Escopo: [A04](actions/A04-retencao-e-limpeza-de-disco.md). Sem mudança de inferência (`pipeline_version` e `effective_config` intactos). Decisão D1 do usuário: o padrão é **apagar `entrada/<job_id>/` após sucesso verificado** (`WHISPER_BOX_INPUT_RETENTION=delete`; `keep` e `<N>d` disponíveis).
+
+| Verificação | Resultado |
+| --- | --- |
+| Suíte no Docker sem rede | **142 testes aprovados** (118 antes): 22 novos de retenção, `purge`, `.partial`, staging e saúde do disco, mais 2 do wrapper. |
+| Ensaio real, `transcribe` de WAV sintético de 4 s (em `C:	mp`) | Código 0; `entrada/<job_id>` removida após o sucesso (log `input_removed`); `saida/.partial/` vazio; as 3 pastas de entrada do histórico real permaneceram. |
+| Reenvio da mesma mídia depois da remoção | `reused: true`, mesmo `job_id`, sem nova pasta em `entrada/`. |
+| `purge --job` sem `--yes` / com `--yes` (só no job sintético) | Dry-run sem alterar nada; com `--yes` removeu saída e registro do job; `status` devolveu `job_not_found` (3). `job_id` malformado: `invalid_arguments` (3). |
+| `purge --older-than 0` (dry-run no histórico real) | Lista os jobs reais sem apagar nada. Nenhum `purge --yes` foi executado no histórico do usuário. |
+| Limpeza de `.partial` na inicialização | Log `partial_cleaned` com 3 itens (diretórios vazios residuais) ao reiniciar o worker. |
+| Retenção e histórico | O marcador `state/retention.json` registra quando a retenção foi ativada; jobs concluídos antes dele não são apagados automaticamente (só por `purge`). |
+| Worker e painel após `start` | Worker `NetworkMode: none`, 2 CPUs e 4 GiB; painel `CapDrop: [ALL]`, sistema de arquivos somente leitura e porta apenas em `127.0.0.1`. |
+
+**Spike do espaço livre (container vs host):** `shutil.disk_usage('/input')` no container do painel devolveu `total=510939623424` e `free=119575244800`, idênticos (diferença 0%) ao `Get-PSDrive C` do Windows no mesmo instante. Com Docker Desktop e bind mount de um drive, o container enxerga o disco do host; o painel usa o valor do container e o ajudante de host não ganhou rota nova. Em Linux/macOS não foi medido.
+
+Pendências e observações:
+
+- O aviso na aba Gravar e a linha “Disco” na aba Logs foram validados por teste da API (`disco`, `aviso_livre_bytes`) e revisão de código; o ensaio visual no navegador (por exemplo com `WHISPER_BOX_DISK_WARN_GIB=100000`) fica para o usuário.
+- A limpeza `<N>d` e a de staging foram cobertas por testes com datas simuladas, não por espera real.
+- Para voltar ao comportamento anterior (manter tudo): `WHISPER_BOX_INPUT_RETENTION=keep` no ambiente antes de `start`, ou trocar o padrão em `compose.yaml`.
+
 ## Limites desta validação
 
 - Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima) e a captura real foi aprovada pelo usuário na mesma data.
