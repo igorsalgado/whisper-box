@@ -1,0 +1,14 @@
+{
+  "name": "Whisper Box",
+  "short_name": "Whisper Box",
+  "description": "Minipainel de gravação e transcrição local.",
+  "lang": "pt-BR",
+  "start_url": "./#/gravar",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#14171b",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icone.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

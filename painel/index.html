@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14171b">
+<title>Whisper Box</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="aviso" class="aviso" role="status" hidden></div>
+
+<main id="main">
+  <!-- GRAVAR -->
+  <section id="v-gravar" class="view" data-rota="gravar" aria-labelledby="h-gravar">
+    <h1 id="h-gravar" class="sr-only" tabindex="-1">Gravar</h1>
+    <div id="timer" class="timer" aria-hidden="true">00:00</div>
+    <div class="meters">
+      <div class="meter" id="mSys"><span class="ml">Sistema</span><span class="bar" id="vuSys" aria-hidden="true"><i></i></span></div>
+      <button id="btnMic" class="meter mic" type="button" role="switch" aria-checked="true">
+        <span class="ml">Microfone</span>
+        <span class="bar" id="vuMic" aria-hidden="true"><i></i></span>
+        <span id="micOff" class="moff" hidden>desligado</span>
+        <span class="sw" aria-hidden="true"></span>
+      </button>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite">Pronto para gravar.</p>
+    <div id="erro" class="caixa erro" role="alert" hidden>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      <span id="erroTxt"></span>
+    </div>
+    <div id="zona" class="zona">
+      <div id="acoes" class="actions">
+        <button id="btnRec" class="btn primary" type="button" title="Gravar (Espaço)" aria-keyshortcuts="Space"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="9"/></svg><span>Gravar</span></button>
+        <button id="btnPause" class="btn" type="button" title="Pausar (Espaço)" aria-keyshortcuts="Space" hidden></button>
+        <button id="btnStop" class="btn stop" type="button" hidden></button>
+        <button id="btnTrans" class="btn primary" type="button" hidden>Transcrever</button>
+      </div>
+      <div id="prog" class="prog" hidden><i></i></div>
+      <div id="sub" class="sub"><button id="btnCancel" class="btn ghost" type="button" hidden>Descartar gravação</button></div>
+      <div id="confirm" class="confirm" role="group" aria-labelledby="confirmTxt" hidden>
+        <p id="confirmTxt">Descartar esta gravação? Não dá para desfazer.</p>
+        <div class="actions">
+          <button id="btnConfirmYes" class="btn danger" type="button">Descartar</button>
+          <button id="btnConfirmNo" class="btn" type="button">Voltar</button>
+        </div>
+      </div>
+    </div>
+    <p id="dica" class="dica">Na janela que abrir, escolha <strong>Tela inteira</strong> e marque <strong>Compartilhar áudio do sistema</strong>.</p>
+  </section>
+
+  <!-- TRANSCRIÇÕES -->
+  <section id="v-transcricoes" class="view scroll" data-rota="transcricoes" aria-labelledby="h-tr" hidden>
+    <h1 id="h-tr" class="sr-only" tabindex="-1">Transcrições</h1>
+    <div id="trErro" class="caixa erro" role="status" hidden>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      <span>Sem conexão com o painel. Tentando de novo…</span>
+    </div>
+    <p id="trLive" class="sr-only" role="status" aria-live="polite"></p>
+    <ul id="trLista" class="lista" aria-busy="true"></ul>
+    <div id="trVazio" class="vazio" hidden>
+      <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M5 12h14M5 17h9"/></svg>
+      <p class="vt">Nenhuma transcrição ainda.</p>
+      <p class="vs">Grave uma reunião e toque em Transcrever.</p>
+    </div>
+  </section>
+
+  <!-- LOGS -->
+  <section id="v-logs" class="view scroll logs" data-rota="logs" aria-labelledby="h-logs" hidden>
+    <h1 id="h-logs" class="sr-only" tabindex="-1">Logs</h1>
+    <div class="row"><h2>Diagnóstico</h2><button id="btnCopiar" class="btn" type="button">Copiar log</button></div>
+    <p id="saudeLinha" class="saude"></p>
+    <dl id="diag" class="diag"></dl>
+    <h2>Eventos</h2>
+    <pre id="logPre" class="log" tabindex="0" aria-label="Eventos da sessão"></pre>
+  </section>
+</main>
+
+<nav class="nav" aria-label="Navegação principal">
+  <a href="#/gravar" data-nav="gravar" aria-keyshortcuts="Alt+1" title="Gravar (Alt+1)"><svg class="ni" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="9"/></svg><span class="pdot" aria-hidden="true"></span><span id="navGravarTxt" class="lbl">Gravar</span></a>
+  <a href="#/transcricoes" data-nav="transcricoes" aria-keyshortcuts="Alt+2" title="Transcrições (Alt+2)"><svg class="ni" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M5 12h14M5 17h9"/></svg><span class="lbl">Transcrições</span></a>
+  <a href="#/logs" data-nav="logs" aria-keyshortcuts="Alt+3" title="Logs (Alt+3)"><svg class="ni" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5M12 18h8"/></svg><span class="lbl">Logs</span></a>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>
