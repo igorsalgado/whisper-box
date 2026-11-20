@@ -1,28 +1,43 @@
 # A02 — Captura, ingestão automática e análise sob demanda
 
 Data: 20/11/2026
-Estado: escopo aprovado; **F3 parcialmente entregue de forma adiantada** (painel de gravação com envio direto pela API); F0, F1, F2 e F4 não implementadas. Revisão de 20/11/2026 registra o que mudou (seção 0).
+Estado: escopo aprovado; **F3 (painel de gravação) entregue e validada pelo usuário em 20/11/2026**; F0, F1, F2 e F4 não implementadas aqui (redistribuídas: ver [índice das actions](README.md)). Revisão de 20/11/2026 registra o que mudou (seção 0).
 Projeto: Whisper Box (`whisper-box`)
 Depende de: [A01](A01-transcricao-offline-docker.md) (motor, fila, deduplicação e verificação, já validados)
 
 ## 0. Estado e decisões (revisão de 20/11/2026)
 
+### Plataforma: somente desktop (decisão do Igor, 20/11/2026)
+
+“Sem app, é totalmente desktop esse dev.” O produto é **exclusivamente desktop**: a interface é a janela própria aberta por `python whisper-box.py painel` (Edge ou Chrome em modo `--app`, perfil `.navegador/`). **PWA, app instalável, service worker, manifest e uso em celular estão descartados** (não adiados). Windows com Docker Desktop é a plataforma validada; macOS e Linux desktop são suporte não validado.
+
 ### Estado por fase
 
 | Fase | Estado | Observações |
 | --- | --- | --- |
-| F0 — Contrato do motor | Não iniciada | Achados I1 a I6, `list`, retenção/`purge`, limpeza de `saida/.partial/` e Ctrl+C/timeout continuam abertos. |
-| F1 — Skill de análise | Não iniciada | Não há skill, nem `list`. Hoje o agente lê `transcricao.txt` a pedido, seguindo a regra 3 reescrita do README. |
-| F2 — Ingestão automática | Não iniciada, em geral substituída pela F3 | O painel envia a gravação direto à fila pela API; a pasta vigiada continua útil apenas para arquivos copiados à mão. |
-| F3 — Painel web | **Parcialmente entregue, adiantada** | Entregues: serviço `painel`, telas Gravar, Transcrições e Logs, janela própria e ajudante de host (ver abaixo). Pendentes: gate de captura real (critério 24), indicador de espaço livre, aviso de consentimento na primeira execução, PWA instalável não validado, `analises/`. |
-| F4 — Opcional | Não iniciada | Condicionada a métricas. |
+| F0 — Contrato do motor | Não iniciada aqui; **A03 em execução** | Achados I1 a I6, `list` e Ctrl+C/timeout vão para a [A03](A03-contrato-do-motor.md); retenção, `purge` e limpeza de `saida/.partial/` para a [A04](A04-retencao-e-limpeza-de-disco.md). |
+| F1 — Skill de análise | Não iniciada | [A05](A05-skill-de-analise.md). Não há skill, nem `list`. Hoje o agente lê `transcricao.txt` a pedido, seguindo a regra 3 reescrita do README. |
+| F2 — Ingestão automática | Não iniciada, em geral substituída pela F3 | O painel envia a gravação direto à fila pela API; a pasta vigiada continua útil apenas para arquivos copiados à mão (backlog). |
+| F3 — Painel (janela desktop) | **Concluída e validada pelo usuário em 20/11/2026** | Entregues: serviço `painel`, telas Gravar, Transcrições e Logs, janela própria e ajudante de host (ver abaixo). Pendências que não bloqueiam o uso: indicador de espaço livre ([A04](A04-retencao-e-limpeza-de-disco.md)), aviso de consentimento na primeira execução e ensaios de borda ([A07](A07-endurecimento-e-operacao.md)), `analises/` ([A05](A05-skill-de-analise.md)). PWA descartado. |
+| F4 — Opcional | Não iniciada | Condicionada a métricas (checkpoint na [A06](A06-desempenho-e-robustez-do-motor.md)). |
+
+### Validação de uso real do painel (Igor, 20/11/2026)
+
+O Igor usou o painel e reportou: “todas as funcionalidades estão ok”. Coberto: captura de **áudio do sistema e do microfone no Edge**, gravar → transcrever → abrir pasta. Registro das medições em [VALIDACAO.md](../VALIDACAO.md).
+
+| Critério (seção 9) | Situação |
+| --- | --- |
+| 24 (gate de captura) | **Validado pelo usuário em 20/11/2026** no Edge; Chrome fica no ensaio da A07, bloco 1. |
+| 25 (áudio do sistema e do microfone na transcrição) | **Validado pelo usuário em 20/11/2026**; a medição formal de gravação longa (10 e 60 min) fica na A07, bloco 1. |
+| 30 (lista e acesso ao resultado) | **Validado pelo usuário em 20/11/2026**, já reescrito para “abrir pasta” (ver seção 9). |
+| 26, 27, 28, 29, 31, 32 | Seguem abertos (ensaios da A07, bloco 1); o 31 perdeu a parte de PWA. |
 
 ### O que foi entregue e difere do desenho original
 
 - **Envio direto pela API em vez da pasta vigiada.** O painel acumula os pedaços em `entrada/.gravacoes/<id>.part` e, em **Transcrever**, fecha o arquivo e chama `jobs.submit` (a mesma rotina da CLI). Não existem `caixa-de-entrada/`, `.part/` separado nem varredura. O worker continua sem rede e sem endpoint. Contrato: [painel-api.md](../painel-api.md).
 - **Servidor:** biblioteca padrão (`http.server`), não FastAPI, no mesmo código do motor (`python -m whisper_box painel`). O serviço `painel` tem bridge própria, publica só `127.0.0.1:8765` (ou `WHISPER_BOX_PAINEL_PORT`), roda com `cap_drop: ALL`, `read_only` e `no-new-privileges`, com `saida/` e `modelos/` somente leitura e `state`/`entrada` em escrita (precisa escrever a fila e o staging).
 - **Segurança:** sem token de API; usa validação de `Host`, `X-Whisper-Box: 1` e `Origin` nas rotas mutáveis. Não há cookie nem resposta `401` (o critério 28 vale com `421`/`403`).
-- **Janela própria e ajudante de host:** `python whisper-box.py painel` abre Edge/Chrome em modo app (perfil `.navegador/`, 380×640) e mantém um ajudante em `127.0.0.1:8766`, com token por execução, que abre `saida/<job_id>` no gerenciador de arquivos. Sem ajudante, o botão vira **Copiar caminho**.
+- **Janela própria e ajudante de host:** `python whisper-box.py painel` abre Edge/Chrome em modo app (perfil `.navegador/`, 380×640) e mantém um ajudante em `127.0.0.1:8766`, com token por execução, que abre `saida/<job_id>` no gerenciador de arquivos. Sem ajudante, o botão vira **Copiar caminho**. **Essa janela é a interface do produto:** não há PWA nem instalação.
 - **Sem downloads na interface:** os arquivos já estão no disco; as rotas de download existem na API, mas a interface não as usa (o critério 30 mudou para “abrir pasta”).
 - **`start` e `stop`:** `start` sobe worker e painel e devolve `painel_url`; `stop` para os dois.
 - **Limite:** 2 GiB por gravação e 16 MiB por pedaço. O limite de 4 horas não é aplicado.
@@ -34,10 +49,12 @@ Depende de: [A01](A01-transcricao-offline-docker.md) (motor, fila, deduplicaçã
 | 2 (idioma) | **Automático** no painel (`auto`), sem escolha na interface. A CLI mantém `pt` como padrão. |
 | 4 (SQLite ro ou índice) | O painel lê a fila pelo mesmo volume `state` (montado em escrita para permitir o `submit`); a lista vem de `Store.list`. |
 | 5 (limites) | 2 GiB por gravação, 16 MiB por pedaço. |
+| 6 (áudio de aplicativo no Edge) | Captura de áudio do sistema inteiro com “Tela inteira” validada no Edge pelo uso real de 20/11/2026; áudio por aplicativo não foi testado. |
 | 8 (porta) | 8765 (painel) e 8766 (ajudante), configuráveis por variável de ambiente. |
+| PWA (decisão D5 do [índice](README.md)) | **Resolvida: descartado.** Produto exclusivamente desktop, com janela própria (`--app`). |
 | Privacidade (seção 8) | **Resolvida pelo Igor:** a análise das transcrições por agente é permitida (projeto pessoal); captura e transcrição continuam locais. A regra 3 do README já foi reescrita. |
 
-Seguem abertas: 1 (retenção), 3 (`processadas/`, hoje sem efeito pois não há pasta vigiada), 6 (áudio de aplicativo no Edge) e 7 (formato da análise).
+Seguem abertas: 1 (retenção), 3 (`processadas/`, hoje sem efeito pois não há pasta vigiada) e 7 (formato da análise).
 
 ## 1. Problema e resultado esperado
 
@@ -55,27 +72,27 @@ Na A01, o fluxo exige que alguém forneça um arquivo e que um agente opere a CL
 
 | Usuário | Necessidade |
 | --- | --- |
-| Humano (Igor) | Gravar reunião (áudio do sistema + microfone), acompanhar status, baixar TXT/SRT, pedir análise. |
+| Humano (Igor), no computador desktop | Gravar reunião (áudio do sistema + microfone), acompanhar status, abrir a pasta do resultado, pedir análise. |
 | Agente do usuário (Claude Code, Codex etc.) | Localizar transcrição por data/título, ler `transcricao.txt`, gerar análise em `analises/`. Também segue operando a CLI manual para arquivos avulsos. |
 | Cliente automático da CLI | Depende do contrato JSON e dos códigos de saída da A01; por isso a F0 vem primeiro. |
 
 ## 3. Fluxo ponta a ponta (desenho original)
 
-> Nota de 20/11/2026: o painel entregue envia a gravação direto à fila pela API (seção 0); os passos 3 a 5 e o diagrama abaixo descrevem a pasta vigiada do desenho original.
+> Nota de 20/11/2026: o painel entregue envia a gravação direto à fila pela API (seção 0); os passos 3 a 5 e o diagrama abaixo descrevem a pasta vigiada do desenho original. O passo 1 foi reescrito pela decisão “somente desktop”.
 
-1. O usuário abre o painel (`http://127.0.0.1:<porta>`, PWA instalável) e informa um título opcional.
+1. O usuário abre a **janela desktop própria** do painel (`python whisper-box.py painel`, Edge/Chrome em modo `--app`, servindo `http://127.0.0.1:<porta>`; **sem PWA nem instalação**, decisão D5 resolvida em 20/11/2026) e informa um título opcional.
 2. Clica em **Gravar** e escolhe a aba/tela a compartilhar com áudio (`getDisplayMedia`); o navegador também pede o microfone (`getUserMedia`). O vídeo é descartado; WebAudio mixa as duas fontes.
 3. `MediaRecorder` emite um pedaço a cada ~5 s; o painel os acrescenta a `caixa-de-entrada/.part/<id>.webm.part`. Queda do navegador ou do painel perde no máximo alguns segundos.
 4. Ao parar, o painel finaliza o arquivo e faz **rename atômico** para `caixa-de-entrada/<nome>.webm`.
 5. O worker, por varredura periódica, vê o arquivo completo, copia e enfileira (título vem do nome). Se o Docker estiver parado, o arquivo espera na pasta.
-6. O painel lista o job, mostra `queued`/`running`/progresso e, em `succeeded`, oferece TXT e SRT.
+6. O painel lista o job, mostra `queued`/`running`/progresso e, em `succeeded`, oferece abrir a pasta do resultado (no desenho original: TXT e SRT para baixar).
 7. Depois, o usuário diz ao agente "resuma a reunião de ontem". O agente roda `list`, escolhe o `job_id`, lê `transcricao.txt` e grava `analises/<job_id>/`.
 
 ```text
-Navegador (Chrome/Edge)
+Janela desktop própria (Edge/Chrome em modo --app)
    │ getDisplayMedia + getUserMedia → WebAudio → MediaRecorder (5 s)
    ▼
-serviço painel (FastAPI, só 127.0.0.1)
+serviço painel (só 127.0.0.1)
    │  rw: caixa-de-entrada/        ro: saida/, estado
    ▼
 caixa-de-entrada/<nome>.webm  ──(varredura)──►  worker (network none, 2 CPU / 4 GiB)
@@ -86,7 +103,7 @@ caixa-de-entrada/<nome>.webm  ──(varredura)──►  worker (network none, 
 
 ## 4. Escopo por fase
 
-Cada fase entrega valor sozinha e só começa quando a anterior estiver aceita (exceto o protótipo da F3, que roda em paralelo).
+Cada fase entrega valor sozinha e só começa quando a anterior estiver aceita (exceto o protótipo da F3, que rodou em paralelo).
 
 ### F0 — Contrato do motor (pré-requisito)
 
@@ -125,22 +142,22 @@ Fora de escopo: análise sem agente; identificação de falantes; envio automát
 
 Fora de escopo: subpastas recursivas; monitorar pastas arbitrárias do host; idioma por arquivo (usa `pt`; configurável por variável de ambiente do worker).
 
-### F3 — Painel web (parcialmente entregue; ver seção 0)
+### F3 — Painel desktop (entregue e validada; ver seção 0)
 
-- Novo serviço `painel` no Compose, publicado somente em `127.0.0.1`.
-- Captura (seção 3), lista de transcrições, status/progresso, download de TXT/SRT, PWA.
-- **Gate de entrada**: o protótipo de captura (hoje incorporado ao painel em `painel/`; o arquivo `prototipos/captura-audio.html` foi removido) deve confirmar (a) captura de áudio do sistema no Chrome e no Edge em Windows e (b) que o worker decodifica o `.webm`/opus gerado. Sem isso, a F3 não começa.
+- Novo serviço `painel` no Compose, publicado somente em `127.0.0.1`, apresentado numa **janela desktop própria** (Edge/Chrome em modo `--app`, aberta por `python whisper-box.py painel`).
+- Captura (seção 3), lista de transcrições, status/progresso e acesso ao resultado (abrir pasta; no desenho original, download de TXT/SRT). **Sem PWA, sem instalação e sem versão para celular** (decisão do Igor, 20/11/2026).
+- **Gate de entrada**: o protótipo de captura (hoje incorporado ao painel em `painel/`; o arquivo `prototipos/captura-audio.html` foi removido) deve confirmar (a) captura de áudio do sistema no Chrome e no Edge em Windows e (b) que o worker decodifica o `.webm`/opus gerado. *Resolvido para o Edge pelo uso real de 20/11/2026 (critério 24); Chrome fica na A07, bloco 1.*
 - Dependências próprias dentro do container (ex.: FastAPI); `whisper-box.py` segue só stdlib. *Entregue com biblioteca padrão, sem FastAPI.*
 
-Fora de escopo: edição de transcrição, upload de arquivos externos, múltiplos usuários, acesso remoto, autenticação além do token local.
+Fora de escopo: edição de transcrição, upload de arquivos externos, múltiplos usuários, acesso remoto, autenticação além da validação local de `Host`/`Origin`, PWA/instalação, interface para celular.
 
 ### F4 — Opcional
 
 | Item | Condição para fazer |
 | --- | --- |
 | Checkpoint por bloco para gravações longas (retomar do último bloco concluído) | Só se reinício de gravação longa se mostrar frequente ou caro nas métricas. Exige rever `pipeline_version` e dedup. |
-| App nativo de bandeja (PySide6 + WASAPI/Process Tap) | Só se o seletor de compartilhamento a cada gravação incomodar. |
-| macOS | Só após ensaio completo; áudio do sistema no navegador é limitado. |
+| App nativo de bandeja (PySide6 + WASAPI/Process Tap) | Só se o seletor de compartilhamento a cada gravação incomodar. Continua sendo desktop. |
+| macOS e Linux desktop | Suporte não validado; só após ensaio completo registrado (áudio do sistema no navegador é limitado no macOS). |
 
 ## 5. Segurança e privacidade do painel (F3)
 
@@ -148,11 +165,11 @@ Fora de escopo: edição de transcrição, upload de arquivos externos, múltipl
 | --- | --- |
 | Exposição | Publicar apenas em `127.0.0.1` (`127.0.0.1:<porta>:<porta>`); nunca `0.0.0.0`. |
 | DNS rebinding | Validar `Host` contra lista fixa (`127.0.0.1`, `localhost` com a porta) e `Origin` em toda requisição mutável; rejeitar o restante com 403. |
-| Token | Token aleatório gerado na inicialização, exigido em toda rota de API; entregue ao navegador na primeira abertura e mantido em cookie `HttpOnly`/`SameSite=Strict`. |
+| Token | Desenho original: token aleatório gerado na inicialização, em cookie `HttpOnly`/`SameSite=Strict`. **Entregue de outra forma** (seção 0): sem cookie, com `X-Whisper-Box: 1` e `Origin` nas rotas mutáveis. |
 | Limites | Tamanho máximo por gravação e por pedaço; contagem de gravações simultâneas; nome de arquivo gerado pelo servidor, nunca vindo do cliente. |
 | Montagens | `caixa-de-entrada/` rw; `saida/` e estado ro. O painel não escreve em `saida/`. |
 | Isolamento | Worker continua sem rede e não fala com o painel; o painel só lê o índice e os arquivos montados. |
-| Consentimento | Gravar reunião exige ciência dos participantes; a decisão e a responsabilidade são do usuário. O painel mostra indicador de gravação visível e aviso na primeira execução. |
+| Consentimento | Gravar reunião exige ciência dos participantes; a decisão e a responsabilidade são do usuário. O painel mostra indicador de gravação visível e aviso na primeira execução (A07, bloco 5). |
 
 ## 6. Contratos entre componentes
 
@@ -219,6 +236,7 @@ O painel lê o estado via leitura do índice (SQLite ro ou arquivo de índice ge
 - Worker com `network_mode: none`, worker exclusivo (lock) e limites de 2 CPUs / 4 GiB.
 - `whisper-box.py` somente com biblioteca padrão; sem `.ps1`/`.sh`.
 - Dependências extras só dentro do container do `painel`.
+- Produto exclusivamente desktop: sem PWA, service worker, manifest nem interface para celular.
 - Qualquer mudança de inferência (modelo, parâmetros, decodificação do áudio) exige novo `pipeline_version` e revisão da deduplicação.
 - Contrato JSON e códigos de saída da A01 mantidos; novos comandos seguem o mesmo padrão (um JSON em stdout, diagnóstico em stderr).
 - Nunca versionar gravações, transcrições, análises, modelos, logs, estado ou credenciais; `caixa-de-entrada/` e `analises/` entram no `.gitignore` e no `.dockerignore`.
@@ -266,31 +284,31 @@ O painel lê o estado via leitura do índice (SQLite ro ou arquivo de índice ge
 23. [ ] O worker segue com `network_mode: none` e limites inalterados (`docker inspect`).
 
 ### F3
-24. [ ] **Gate**: protótipo confirma captura de áudio do sistema no Chrome e no Edge (Windows) e o worker transcreve o `.webm`/opus gerado; resultado registrado em `docs/VALIDACAO.md`.
-25. [ ] Gravação de 10 minutos: áudio do sistema e do microfone audíveis na transcrição; nenhum vídeo gravado em disco.
-26. [ ] Matar o navegador no meio da gravação preserva todo o conteúdo anterior aos últimos ~10 s (a gravação parcial fica em `.part/` e o painel oferece finalizá-la).
+24. [x] **Gate** (validado pelo usuário em 20/11/2026): captura de áudio do sistema no Edge (Windows) e o worker transcreve o `.webm`/opus gerado; resultado registrado em `docs/VALIDACAO.md`. *Chrome: ensaio na A07, bloco 1, tarefa 6.*
+25. [x] Gravação com áudio do sistema e do microfone audíveis na transcrição (validado pelo usuário em 20/11/2026, uso real no Edge). *A medição formal de 10 e 60 min e a conferência de que nenhum vídeo é gravado em disco ficam na A07, bloco 1.*
+26. [ ] Matar o navegador no meio da gravação preserva todo o conteúdo anterior aos últimos ~10 s (a gravação parcial fica em `.part/` e o painel oferece finalizá-la). *Hoje a interface não oferece finalizar; ver A07, bloco 1.*
 27. [ ] Parar a gravação publica o arquivo por rename atômico; o worker nunca vê arquivo incompleto.
-28. [ ] O painel só responde em `127.0.0.1`: acesso pelo IP da rede local falha; requisição com `Host` ou `Origin` inesperado retorna 403; requisição sem token retorna 401.
+28. [ ] O painel só responde em `127.0.0.1`: acesso pelo IP da rede local falha; requisição com `Host` ou `Origin` inesperado retorna 403 (ou 421, ver seção 0). *Sem cookie nem 401 no desenho entregue.*
 29. [ ] Gravação acima do limite configurado é interrompida com aviso claro e o conteúdo gravado até então é preservado.
-30. [ ] A lista mostra status e progresso corretos dos jobs e permite baixar TXT e SRT apenas de jobs `succeeded` verificados.
-31. [ ] O painel monta `saida/` e estado como somente leitura (`docker inspect`) e é instalável como PWA no Chrome e no Edge.
+30. [x] A lista mostra status e progresso corretos dos jobs e permite **abrir a pasta** (ou copiar o caminho) apenas de jobs `succeeded` verificados (validado pelo usuário em 20/11/2026; reescrito de “baixar TXT e SRT”).
+31. [ ] O painel monta `saida/` e estado como somente leitura (`docker inspect`). *A parte “instalável como PWA no Chrome e no Edge” foi removida: PWA descartado em 20/11/2026 (produto somente desktop, janela própria).*
 32. [ ] Gravar durante a transcrição de outro job não afeta o worker além do limite de 2 CPUs / 4 GiB.
 
 ## 10. Riscos
 
 | Risco | Impacto | Tratamento |
 | --- | --- | --- |
-| Áudio do sistema no macOS é limitado no navegador | F3 não cobre macOS | Plataforma validada: Windows; macOS na F4. |
-| Seletor de compartilhamento a cada gravação | Atrito; esquecer de marcar "compartilhar áudio" gera gravação só com microfone | Aviso na UI antes de gravar e detecção de trilha de áudio do sistema ausente; app nativo na F4 se incomodar. |
-| A aba do painel precisa ficar aberta | Fechar a aba encerra a gravação | Aviso ao fechar; preservar o `.part`; finalização manual. |
-| Firefox e Safari não suportam captura de áudio do sistema | Fora de suporte | Documentar Chrome/Edge. |
-| Crescimento de disco (gravações, cópias, saídas) | Disco cheio, falha silenciosa | Retenção da F0; indicador de espaço livre no painel; `purge`. |
+| Áudio do sistema no macOS é limitado no navegador | F3 não cobre macOS | Plataforma validada: Windows. macOS e Linux desktop: suporte não validado, só com ensaio completo (F4). |
+| Seletor de compartilhamento a cada gravação | Atrito; esquecer de marcar "compartilhar áudio" gera gravação só com microfone | Aviso na UI antes de gravar e detecção de trilha de áudio do sistema ausente; app nativo de bandeja (desktop) na F4 se incomodar. Uso real de 20/11/2026 não relatou atrito. |
+| A janela do painel precisa ficar aberta | Fechar a janela encerra a gravação | Aviso ao fechar; preservar o `.part`; finalização manual. |
+| Firefox e Safari não suportam captura de áudio do sistema | Fora de suporte | Documentar Chrome/Edge (janela própria em modo `--app`). |
+| Crescimento de disco (gravações, cópias, saídas) | Disco cheio, falha silenciosa | Retenção da F0 (A04); indicador de espaço livre no painel; `purge`. |
 | Consentimento dos participantes | Risco legal e ético | Aviso, indicador visível e responsabilidade do usuário. |
-| Gravação longa reinicia do zero se o worker cair | Retrabalho (limitação já aceita na A01) | Medir; checkpoint por bloco na F4 se necessário. |
-| `.webm`/opus incompatível com o decodificador | Transcrição falha | Gate do protótipo antes da F3. |
-| Varredura em bind mount lenta ou arquivo grande em escrita manual | Leitura de arquivo incompleto | Estabilidade em duas varreduras e regra de `.part`. |
+| Gravação longa reinicia do zero se o worker cair | Retrabalho (limitação já aceita na A01) | Medir; checkpoint por bloco na F4/A06 se necessário. |
+| `.webm`/opus incompatível com o decodificador | Transcrição falha | Gate do protótipo; validado no Edge em 20/11/2026. |
+| Varredura em bind mount lenta ou arquivo grande em escrita manual | Leitura de arquivo incompleto | Estabilidade em duas varreduras e regra de `.part` (só se a pasta vigiada for retomada). |
 | Análise por agente em nuvem expõe conteúdo | Privacidade | Decisão registrada na seção 8; só o texto pedido é lido. |
-| Painel exposto por engano | Superfície de ataque local | Bind em 127.0.0.1, validação de Host/Origin, token, teste de aceite 28. |
+| Painel exposto por engano | Superfície de ataque local | Bind em 127.0.0.1, validação de Host/Origin, teste de aceite 28. |
 
 ## 11. Métricas de sucesso
 
@@ -302,13 +320,13 @@ O painel lê o estado via leitura do índice (SQLite ro ou arquivo de índice ge
 | Tempo entre o fim da gravação e o início da transcrição | ≤ 15 s com worker ativo | `created_at` do job versus rename. |
 | Análises corretas na primeira tentativa (reunião certa) | ≥ 90% em 10 pedidos | Revisão manual. |
 | Itens de ata sem horário citado | 0 | Amostra de 5 análises. |
-| Falhas I1 a I6 reproduzíveis | 0 | Testes da F0. |
+| Falhas I1 a I6 reproduzíveis | 0 | Testes da F0 (A03). |
 
 Leitura: revisar após duas semanas de uso real; decidir sobre F4 com base nas métricas de perda e de atrito do seletor.
 
 ## 12. Perguntas em aberto
 
-O estado atual das perguntas está na seção 0 (resolvidas: 2, 4, 5, 8 e a de privacidade). A tabela abaixo é o registro original.
+O estado atual das perguntas está na seção 0 (resolvidas: 2, 4, 5, 6, 8, PWA e privacidade). A tabela abaixo é o registro original.
 
 | # | Pergunta | Dono | Necessária antes de |
 | --- | --- | --- | --- |
@@ -323,4 +341,4 @@ O estado atual das perguntas está na seção 0 (resolvidas: 2, 4, 5, 8 e a de p
 
 ## 13. Dependências e sequência
 
-`F0` → `F1` e `F2` (podem correr em paralelo após F0) → `F3` (depende de F2 e do gate do protótipo) → `F4` (opcional, por métrica). Handoffs: dev-backend (F0, F2, `list`), dev-frontend + dev-backend (F3), qa-engineer (matriz dos critérios da seção 9), infra (Compose, portas, limites).
+`F0` → `F1` e `F2` (podem correr em paralelo após F0) → `F3` (depende de F2 e do gate do protótipo; **entregue**) → `F4` (opcional, por métrica). Handoffs: dev-backend (F0, F2, `list`), dev-frontend + dev-backend (F3), qa-engineer (matriz dos critérios da seção 9), infra (Compose, portas, limites).
