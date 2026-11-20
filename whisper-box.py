@@ -8,6 +8,7 @@ contrato; diagnósticos do Docker seguem para stderr.
 Agentes: comece por `doctor` e transcreva com `transcribe --input CAMINHO`.
 """
 import argparse
+import hashlib
 import hmac
 import json
 import math
@@ -21,16 +22,23 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-COMMANDS = "doctor, prepare, start, stop, painel, transcribe, submit, status, wait, result ou logs"
-JOB_COMMANDS = ("status", "wait", "result")
-LIFECYCLE_COMMANDS = ("prepare", "start", "stop")
+COMMANDS = "doctor, prepare, start, stop, painel, transcribe, submit, status, wait, result, list ou logs"
+JOB_COMMANDS = ("status", "wait", "result", "list")
+LIFECYCLE_COMMANDS = ("start", "stop")
 ARTIFACTS = ("text", "srt", "segments", "metadata")
 IMAGE = "whisper-box:local"
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+RETRY_DELAYS = (2, 5)  # esperas (s) das novas tentativas após falha transitória do Docker
+JOB_TIMEOUT = 120  # status, result, list
+SUBMIT_TIMEOUT = 3600  # cópia de até 2 GiB
+START_TIMEOUT = 300
+PREPARE_TIMEOUT = 3600
+DIGEST_LABEL = "whisper-box.source-digest"
 HELPER_PORT = 8766
 HELPER_PORT_TRIES = 10
 BROWSER_SETTLE_SECONDS = 3.0
@@ -60,8 +68,36 @@ class Parser(argparse.ArgumentParser):
         raise ArgumentError(message)
 
 
-def error_json(code: str, message: str) -> str:
-    return json.dumps({"error": {"code": code, "message": message}}, ensure_ascii=False)
+class DockerTimeout(Exception):
+    """Subprocesso do Docker excedeu o tempo; o container nomeado já foi removido."""
+
+
+def error_json(code: str, message: str, job_id: str = None) -> str:
+    body = {"error": {"code": code, "message": message}}
+    if job_id:
+        body = dict([("job_id", job_id)] + list(body.items()))
+    return json.dumps(body, ensure_ascii=False)
+
+
+def parse_json(text: str):
+    """Devolve o objeto JSON de uma resposta ou None se não for um objeto JSON válido."""
+    try:
+        body = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def add_job_id(text: str, job_id: str) -> str:
+    """Garante o job_id em respostas de erro de um trabalho já existente."""
+    body = parse_json(text)
+    if job_id and body is not None and "error" in body and "job_id" not in body:
+        return json.dumps(dict([("job_id", job_id)] + list(body.items())), ensure_ascii=False)
+    return text
+
+
+def cli_name() -> str:
+    return "whisper-box-cli-" + uuid.uuid4().hex[:8]
 
 
 def platform_name() -> str:
@@ -75,7 +111,21 @@ def compose_base(root: Path = ROOT) -> list:
             "-f", str(root / "compose.yaml")]
 
 
-def submit_arguments(rest: list) -> tuple:
+def path_problem(text: str, platform: str = None):
+    """Motivo (código, mensagem) de um caminho que o bind mount não suporta, ou None."""
+    platform = platform or platform_name()
+    extended = text.startswith("\\\\?\\")
+    plain = text[4:] if extended else text
+    if platform == "windows" and not extended and text[:2] in ("\\\\", "//"):
+        return ("unsupported_path", "Caminhos de rede (UNC, como \\\\servidor\\pasta) nao sao suportados "
+                                    "(nao testados). Copie o arquivo para um disco local e informe esse caminho.")
+    if ":" in re.sub(r"^[A-Za-z]:", "", plain):
+        return ("unsupported_path", "O caminho contem ':' alem da letra da unidade, o que o bind mount nao "
+                                    "aceita. Copie o arquivo para um caminho sem ':' e informe esse caminho.")
+    return None
+
+
+def submit_arguments(rest: list, name: str = None, platform: str = None) -> tuple:
     """Monta a chamada de submit e o bind mount somente leitura da gravação.
 
     Devolve (argumentos, None) ou (None, (código_erro, mensagem)).
@@ -85,22 +135,28 @@ def submit_arguments(rest: list) -> tuple:
         index = rest.index("--input")
     except ValueError:
         index = -1
-    if index < 0 or index + 1 >= len(rest):
+    if index < 0 or index + 1 >= len(rest) or not rest[index + 1].strip():
         return None, ("invalid_arguments", "Informe --input com o caminho da gravacao.")
+    problem = path_problem(rest[index + 1], platform)
+    if problem:
+        return None, problem
     source = Path(rest[index + 1])
     if not source.is_file():
         return None, ("input_not_found", "Informe um arquivo de midia existente.")
     source = source.resolve()
+    problem = path_problem(str(source), platform)
+    if problem:
+        return None, problem
     # O caminho é dado, nunca shell: subprocess recebe uma lista de argumentos.
+    # `docker compose run` não tem --mount; o formato curto exige que o caminho não tenha ':'.
     container_path = "/source/recording" + source.suffix
     rest[index + 1] = container_path
     mount = str(source) + ":" + container_path + ":ro"
-    return ["--profile", "tools", "run", "--rm", "--no-deps", "-T",
-            "--volume", mount, "cli", "submit"] + rest, None
+    return ["--profile", "tools", "run", "--rm"] + (["--name", name] if name else []) +         ["--no-deps", "-T", "--volume", mount, "cli", "submit"] + rest, None
 
 
-def job_arguments(command: str, rest: list) -> list:
-    return ["--profile", "tools", "run", "--rm", "--no-deps", "-T", "cli", command] + list(rest)
+def job_arguments(command: str, rest: list, name: str = None) -> list:
+    return ["--profile", "tools", "run", "--rm"] + (["--name", name] if name else []) +         ["--no-deps", "-T", "cli", command] + list(rest)
 
 
 def start_arguments() -> list:
@@ -116,28 +172,69 @@ def painel_url(env: dict = None) -> str:
     return "http://127.0.0.1:" + port + "/"
 
 
-def run_to_stderr(arguments: list, env: dict) -> int:
-    """Executa Docker enviando a saída dele para stderr, preservando stdout para JSON."""
+def run_to_stderr(arguments: list, env: dict, timeout: int = None) -> int:
+    """Executa Docker enviando a saída dele para stderr, preservando stdout para JSON.
+
+    Estouro de `timeout` encerra o processo e devolve 1 (diagnóstico em stderr).
+    """
     sys.stderr.flush()
     try:
-        return subprocess.run(arguments, stdout=sys.stderr.fileno(), env=env).returncode
-    except (AttributeError, OSError, ValueError):
-        completed = subprocess.run(arguments, stdout=subprocess.PIPE, env=env)
-        sys.stderr.write(completed.stdout.decode("utf-8", "replace"))
-        return completed.returncode
+        try:
+            return subprocess.run(arguments, stdout=sys.stderr.fileno(), env=env, timeout=timeout).returncode
+        except (AttributeError, OSError, ValueError):
+            completed = subprocess.run(arguments, stdout=subprocess.PIPE, env=env, timeout=timeout)
+            sys.stderr.write(completed.stdout.decode("utf-8", "replace"))
+            return completed.returncode
+    except subprocess.TimeoutExpired:
+        print("Tempo esgotado ao executar o Docker (%ss)." % timeout, file=sys.stderr, flush=True)
+        return 1
 
 
-def capture(arguments: list, env: dict) -> tuple:
-    """Executa a CLI do container e devolve (json_texto, código); ausência de resposta vira erro."""
-    completed = subprocess.run(arguments, stdout=subprocess.PIPE, env=env)
+def remove_container(name: str) -> None:
+    """Remove, em melhor esforço, o container nomeado de uma chamada interrompida."""
+    if not name:
+        return
+    try:
+        subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def capture(arguments: list, env: dict, timeout: int = JOB_TIMEOUT, name: str = None) -> tuple:
+    """Executa a CLI do container e devolve (json_texto, código).
+
+    Resposta ausente ou que não seja um objeto JSON vira `docker_error` (código 1). Estouro de
+    `timeout` levanta DockerTimeout e Ctrl+C levanta KeyboardInterrupt, ambos após remover o container.
+    """
+    try:
+        completed = subprocess.run(arguments, stdout=subprocess.PIPE, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        remove_container(name)
+        raise DockerTimeout()
+    except KeyboardInterrupt:
+        remove_container(name)
+        raise
     text = completed.stdout.decode("utf-8", "replace").strip()
-    if not text:
-        return error_json("docker_error", "Sem resposta do container. Execute doctor."), completed.returncode or 1
+    if parse_json(text) is None:
+        reason = "Sem resposta do container." if not text else "Resposta do container nao e JSON."
+        return error_json("docker_error", reason + " Execute doctor."), 1
     return text, completed.returncode
 
 
-def run_cli(arguments: list, env: dict, out) -> int:
-    text, code = capture(arguments, env)
+def interruption(error: BaseException, job_id: str = None) -> str:
+    if isinstance(error, DockerTimeout):
+        return error_json("docker_timeout", "O Docker nao respondeu no tempo esperado. Execute doctor.", job_id)
+    return error_json("interrupted", "Execucao interrompida pelo usuario.", job_id)
+
+
+def run_cli(arguments: list, env: dict, out, timeout: int = JOB_TIMEOUT, name: str = None,
+            job_id: str = None) -> int:
+    try:
+        text, code = capture(arguments, env, timeout, name)
+    except (DockerTimeout, KeyboardInterrupt) as error:
+        print(interruption(error, job_id), file=out)
+        return 1
     print(text, file=out)
     return code
 
@@ -150,7 +247,46 @@ def probe(arguments: list, timeout: int = 30) -> tuple:
         return None, "nao encontrado"
     except subprocess.TimeoutExpired:
         return None, "sem resposta"
+    except OSError:  # inclui PermissionError
+        return None, "sem permissao"
     return completed.returncode, completed.stdout.decode("utf-8", "replace").strip()
+
+
+def source_digest(root: Path = None) -> str:
+    """SHA-256 do código que vai para a imagem (Dockerfile, requirements.lock, src/**/*.py, whisper-box.py)."""
+    root = ROOT if root is None else root
+    files = [root / "Dockerfile", root / "requirements.lock", root / "whisper-box.py"]
+    files += sorted((root / "src").rglob("*.py"), key=lambda item: item.relative_to(root).as_posix())
+    digest = hashlib.sha256()
+    for path in files:
+        if not path.is_file():
+            continue
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def model_problem(root: Path = None):
+    """None se modelos/manifest.json é íntegro (JSON, revisão, arquivos com o tamanho registrado)."""
+    root = ROOT if root is None else root
+    manifest_path = root / "modelos" / "manifest.json"
+    if not manifest_path.is_file():
+        return "ausente"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = manifest["files"]
+        if not isinstance(manifest["revision"], str) or not manifest["revision"] \
+                or not isinstance(files, dict) or not files:
+            return "manifest.json incompleto"
+        for name, entry in files.items():
+            size = entry["size"]
+            path = root / "modelos" / "small" / name
+            if isinstance(size, bool) or not isinstance(size, int) or not path.is_file() \
+                    or path.stat().st_size != size:
+                return "arquivo do modelo ausente ou com tamanho diferente: " + str(name)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return "manifest.json invalido"
+    return None
 
 
 def doctor(out) -> int:
@@ -177,14 +313,25 @@ def doctor(out) -> int:
                  detail if code == 0 else "engine parado ou sem permissao",
                  {"code": "start_docker", "requires_user_approval": False, "action": DOCKER_START[platform]}):
         return finish_doctor(out, platform, checks, steps)
-    code, _ = probe(["docker", "image", "inspect", IMAGE])
+    code, label = probe(["docker", "image", "inspect", "--format",
+                         '{{ index .Config.Labels "' + DIGEST_LABEL + '" }}', IMAGE])
     image_ready = check("image", code == 0, IMAGE if code == 0 else "ausente")
-    model_ready = check("model", (ROOT / "modelos" / "manifest.json").is_file(),
-                        "modelos/manifest.json" if (ROOT / "modelos" / "manifest.json").is_file() else "ausente")
+    problem = model_problem()
+    model_ready = check("model", problem is None, "modelos/manifest.json" if problem is None else problem)
     if not (image_ready and model_ready):
-        steps.append({"code": "prepare", "requires_user_approval": True,
-                      "action": "Execute: python whisper-box.py prepare (uma vez, com internet; baixa imagem e "
-                                "modelo de aproximadamente 500 MB)."})
+        action = ("Execute: python whisper-box.py prepare (uma vez, com internet; baixa imagem e "
+                  "modelo de aproximadamente 500 MB).")
+        if problem not in (None, "ausente"):
+            action += " O modelo existente parece corrompido: peca ao usuario para preservar ou renomear modelos/ antes."
+        steps.append({"code": "prepare", "requires_user_approval": True, "action": action})
+    elif label and label not in ("<no value>", "unknown"):
+        # Imagem construída sem o rótulo (docker compose build direto) não é comparável e é aceita.
+        current = source_digest()
+        check("image_current", label == current,
+              "atual" if label == current else "codigo local difere da imagem",
+              {"code": "rebuild", "requires_user_approval": False,
+               "action": "Execute: python whisper-box.py stop e depois docker compose build --build-arg "
+                         "SOURCE_DIGEST=" + current + " worker; em seguida rode doctor de novo."})
     return finish_doctor(out, platform, checks, steps)
 
 
@@ -208,57 +355,89 @@ def transcribe(rest: list, env: dict, out) -> int:
     parser.add_argument("--language", choices=("pt", "en", "es", "auto"), default=None)
     parser.add_argument("--timeout-seconds", type=int, default=7200)
     args = parser.parse_args(rest)
-    if args.job and args.language:
+    if args.job is not None and args.language:
         raise ArgumentError("--language so se aplica a --input.")
     if not 1 <= args.timeout_seconds <= 86400:
         raise ArgumentError("--timeout-seconds deve estar entre 1 e 86400.")
-    if args.input and not Path(args.input).is_file():
-        print(error_json("input_not_found", "Informe um arquivo de midia existente."), file=out)
-        return 3
+    if args.input is not None and not args.input.strip():
+        raise ArgumentError("--input nao pode ser vazio.")
+    if args.job is not None and not JOB_ID_PATTERN.fullmatch(args.job):
+        raise ArgumentError("--job deve ser um identificador de 32 caracteres hexadecimais.")
 
     compose = compose_base()
-    if run_to_stderr(compose + start_arguments(), env) != 0:
-        print(error_json("docker_error", "O worker nao iniciou. Execute doctor."), file=out)
-        return 1
-    job_id = args.job
-    if args.input:
-        arguments, _ = submit_arguments(["--input", args.input, "--language", args.language or "pt"])
-        text, code = capture(compose + arguments, env)
-        if code != 0:
-            print(text, file=out)
-            return code
-        job_id = json.loads(text)["job_id"]
-    print(json.dumps({"event": "whisper_waiting", "job_id": job_id}), file=sys.stderr, flush=True)
-
+    submit_call = None
+    submit_name = None
+    if args.input is not None:
+        submit_name = cli_name()
+        submit_call, failure = submit_arguments(["--input", args.input, "--language", args.language or "pt"],
+                                                submit_name)
+        if failure:
+            print(error_json(*failure), file=out)
+            return 3
     deadline = time.monotonic() + args.timeout_seconds
-    observed = {}
-    while True:
-        remaining = math.ceil(deadline - time.monotonic())
-        if remaining <= 0:
-            print(json.dumps({"job_id": job_id, "status": observed.get("status"), "timed_out": True,
-                              "wait_budget_exhausted": True}), file=out)
-            return 2
-        text, code = capture(compose + job_arguments("wait", ["--job", job_id, "--timeout",
-                                                              str(min(30, remaining))]), env)
-        if code == 2:
-            observed = json.loads(text)
-            continue
-        if code != 0:
-            print(text, file=out)
-            return code
-        text, code = capture(compose + job_arguments("result", ["--job", job_id]), env)
-        if code == 4:
-            continue
-        if code != 0:
-            print(text, file=out)
-            return code
-        files = json.loads(text).get("files") or {}
-        if not all(files.get(key) and Path(files[key]).is_file() for key in ARTIFACTS):
-            print(json.dumps({"job_id": job_id, "error": {"code": "output_unreachable",
-                              "message": "Artefatos ausentes ou inacessiveis pelo host."}}), file=out)
+    job_id = args.job
+
+    def job_call(command, extra, timeout):
+        """Chama o container e repete (até 2 vezes) só em falha transitória do Docker."""
+        attempt = 0
+        while True:
+            name = cli_name()
+            try:
+                text, code = capture(compose + job_arguments(command, extra, name), env, timeout, name)
+            except (OSError, subprocess.SubprocessError) as error:
+                print(json.dumps({"event": "whisper_docker_failure", "type": type(error).__name__}),
+                      file=sys.stderr, flush=True)
+                text, code = error_json("docker_error", "Falha ao executar o Docker. Execute doctor."), 1
+            body = parse_json(text) or {}
+            transient = (body.get("error") or {}).get("code") == "docker_error"
+            if not transient or attempt >= len(RETRY_DELAYS):
+                return text, code
+            delay = RETRY_DELAYS[attempt]
+            if time.monotonic() + delay >= deadline:
+                return text, code
+            print(json.dumps({"event": "whisper_retry", "job_id": job_id, "in_seconds": delay}),
+                  file=sys.stderr, flush=True)
+            time.sleep(delay)
+            attempt += 1
+
+    try:
+        if run_to_stderr(compose + start_arguments(), env, START_TIMEOUT) != 0:
+            print(error_json("docker_error", "O worker nao iniciou. Execute doctor."), file=out)
             return 1
-        print(text, file=out)
-        return 0
+        if submit_call is not None:
+            text, code = capture(compose + submit_call, env, SUBMIT_TIMEOUT, submit_name)
+            job_id = (parse_json(text) or {}).get("job_id")
+            if code != 0 or not job_id:
+                print(text if code != 0 else error_json("docker_error", "O submit nao devolveu job_id."), file=out)
+                return code or 1
+        print(json.dumps({"event": "whisper_waiting", "job_id": job_id}), file=sys.stderr, flush=True)
+
+        observed = {}
+        while True:
+            remaining = math.ceil(deadline - time.monotonic())
+            if remaining <= 0:
+                print(json.dumps({"job_id": job_id, "status": observed.get("status"), "timed_out": True,
+                                  "wait_budget_exhausted": True}), file=out)
+                return 2
+            wait_seconds = min(30, remaining)
+            text, code = job_call("wait", ["--job", job_id, "--timeout", str(wait_seconds)], wait_seconds + 60)
+            if code == 2:
+                observed = parse_json(text) or {}
+                continue
+            if code != 0:
+                print(add_job_id(text, job_id), file=out)
+                return code
+            # `wait` bem-sucedido já traz files e output_relative (mesmo status(include_files=True)).
+            files = (parse_json(text) or {}).get("files") or {}
+            if not all(isinstance(files.get(key), str) and Path(files[key]).is_file() for key in ARTIFACTS):
+                print(error_json("output_unreachable", "Artefatos ausentes ou inacessiveis pelo host.", job_id),
+                      file=out)
+                return 1
+            print(text, file=out)
+            return 0
+    except (DockerTimeout, KeyboardInterrupt) as error:
+        print(interruption(error, job_id), file=out)
+        return 1
 
 
 # -- Janela própria do painel e ajudante de host ---------------------------------
@@ -488,6 +667,51 @@ def panel(env: dict, out, stop: threading.Event = None) -> int:
     return 0
 
 
+def local_offset_minutes(now: float = None) -> int:
+    """Deslocamento do fuso local do host em relação a UTC, em minutos (inclui horário de verão)."""
+    offset = getattr(time.localtime(now), "tm_gmtoff", None)
+    return int(offset // 60) if offset is not None else 0
+
+
+def job_from(rest: list):
+    """Valor de --job em uma lista de argumentos, se for um job_id bem formado."""
+    for index, item in enumerate(rest[:-1]):
+        if item == "--job" and JOB_ID_PATTERN.fullmatch(rest[index + 1]):
+            return rest[index + 1]
+    return None
+
+
+def wait_timeout(rest: list) -> int:
+    for index, item in enumerate(rest[:-1]):
+        if item == "--timeout" and rest[index + 1].isdigit():
+            return min(int(rest[index + 1]), 3600)
+    return 30
+
+
+def prepare(compose: list, env: dict, out) -> int:
+    """Build da imagem (saída para stderr) e preparo do modelo; stdout recebe um único JSON."""
+    build = compose + ["build", "--build-arg", "SOURCE_DIGEST=" + source_digest(), "worker"]
+    if run_to_stderr(build, env, None) != 0:
+        print(error_json("docker_error", "Falha no Docker. Consulte stderr e execute doctor."), file=out)
+        return 1
+    name = cli_name()
+    try:
+        text, code = capture(compose + ["--profile", "setup", "run", "--rm", "--name", name, "--no-deps", "-T",
+                                        "prepare"], env, PREPARE_TIMEOUT, name)
+    except (DockerTimeout, KeyboardInterrupt) as error:
+        print(interruption(error), file=out)
+        return 1
+    if code == 0:
+        print(text, file=out)
+        return 0
+    body = parse_json(text) or {}
+    if "error" in body:
+        print(text, file=out)
+    else:
+        print(error_json("docker_error", "Falha no Docker. Consulte stderr e execute doctor."), file=out)
+    return 1
+
+
 def main(argv: list, out=None) -> int:
     out = out or sys.stdout
     if not argv:
@@ -508,13 +732,9 @@ def main(argv: list, out=None) -> int:
             print(error_json("invalid_arguments", str(error)), file=out)
             return 3
     if command == "prepare":
-        code = run_to_stderr(compose + ["build", "worker"], env)
-        if code == 0:
-            out.flush()
-            code = subprocess.run(compose + ["--profile", "setup", "run", "--rm", "--no-deps", "-T", "prepare"],
-                                  env=env).returncode
+        return prepare(compose, env, out)
     elif command == "start":
-        code = run_to_stderr(compose + start_arguments(), env)
+        code = run_to_stderr(compose + start_arguments(), env, START_TIMEOUT)
         if code == 0:
             body = {"status": "ready"}
             # O painel e opcional: sua falha nunca altera o codigo de saida.
@@ -524,20 +744,28 @@ def main(argv: list, out=None) -> int:
                 body["painel_error"] = "O painel nao iniciou. O worker segue disponivel; consulte stderr."
             print(json.dumps(body, ensure_ascii=False, separators=(",", ":")), file=out)
     elif command == "stop":
-        code = run_to_stderr(compose + ["stop", "worker", "painel"], env)
+        code = run_to_stderr(compose + ["stop", "worker", "painel"], env, JOB_TIMEOUT)
         if code == 0:
             print('{"status":"stopped"}', file=out)
     elif command == "logs":
         out.flush()
         code = subprocess.run(compose + ["logs", "--tail", "50", "worker"], env=env).returncode
     elif command == "submit":
-        arguments, failure = submit_arguments(rest)
+        name = cli_name()
+        arguments, failure = submit_arguments(rest, name)
         if failure:
             print(error_json(*failure), file=out)
             return 3
-        code = run_cli(compose + arguments, env, out)
+        code = run_cli(compose + arguments, env, out, SUBMIT_TIMEOUT, name)
     elif command in JOB_COMMANDS:
-        code = run_cli(compose + job_arguments(command, rest), env, out)
+        name = cli_name()
+        timeout = JOB_TIMEOUT
+        if command == "list":
+            # O container roda em UTC; o deslocamento do host faz --since/--until e os horários usarem o fuso local.
+            rest = rest + ["--utc-offset-minutes", str(local_offset_minutes())]
+        elif command == "wait":
+            timeout = wait_timeout(rest) + 60
+        code = run_cli(compose + job_arguments(command, rest, name), env, out, timeout, name, job_from(rest))
     else:
         print(error_json("invalid_arguments", "Comando desconhecido. Use " + COMMANDS + "."), file=out)
         return 3
@@ -555,7 +783,11 @@ def entrypoint() -> int:
             pass
     try:
         return main(sys.argv[1:])
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+    except KeyboardInterrupt:
+        print(error_json("interrupted", "Execucao interrompida pelo usuario."))
+        return 1
+    except Exception as error:  # nenhum traceback em stdout; só o tipo vai para stderr
+        print("Falha inesperada (%s)." % type(error).__name__, file=sys.stderr, flush=True)
         print(error_json("operational_error", "Nao foi possivel executar o comando. Execute doctor."))
         return 1
 

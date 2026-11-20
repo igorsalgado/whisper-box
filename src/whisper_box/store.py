@@ -55,20 +55,44 @@ class Store:
             raise BoxError("job_not_found", "Trabalho inexistente.", 3)
         return dict(row)
 
-    def list(self, limit: int = 50) -> list:
+    def list(self, limit: int = 50, status: str | None = None,
+             since: float | None = None, until: float | None = None) -> list:
+        """Mais recentes primeiro. `since` é inclusivo e `until` exclusivo (epoch, sobre created_at)."""
+        conditions, values = [], []
+        if status is not None:
+            conditions.append("status=?")
+            values.append(status)
+        if since is not None:
+            conditions.append("created_at>=?")
+            values.append(since)
+        if until is not None:
+            conditions.append("created_at<?")
+            values.append(until)
+        where = ("WHERE " + " AND ".join(conditions) + " ") if conditions else ""
         with self.connection() as db:
-            rows = db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?",
-                              (max(1, int(limit)),)).fetchall()
+            rows = db.execute(f"SELECT * FROM jobs {where}ORDER BY created_at DESC, id DESC LIMIT ?",
+                              (*values, max(1, int(limit)))).fetchall()
         return [dict(row) for row in rows]
 
-    def enqueue(self, job_id, fingerprint, input_hash, input_path, source_name, config):
+    def enqueue(self, job_id, fingerprint, input_hash, input_path, source_name, config, is_valid=None):
+        """Enfileira ou reutiliza o job equivalente.
+
+        `is_valid(job)` verifica a saída de um job `succeeded` antes da reutilização: False invalida
+        o job antigo (`output_lost`) e cria um novo; None (erro transitório de E/S) mantém o antigo.
+        """
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT id FROM jobs WHERE fingerprint=? AND status!='failed'", (fingerprint,)
+                "SELECT * FROM jobs WHERE fingerprint=? AND status!='failed'", (fingerprint,)
             ).fetchone()
             if row:
-                return row["id"], True
+                if row["status"] != "succeeded" or is_valid is None or is_valid(dict(row)) is not False:
+                    return row["id"], True
+                db.execute(
+                    """UPDATE jobs SET status='failed', error_code='output_lost', error_message=?
+                    WHERE id=?""",
+                    ("Saída ausente ou alterada; a mídia foi reenviada e reprocessada.", row["id"]),
+                )
             db.execute(
                 """INSERT INTO jobs
                 (id,fingerprint,input_hash,input_path,source_name,config,status,created_at)
@@ -88,7 +112,8 @@ class Store:
                 return None
             db.execute(
                 """UPDATE jobs SET status='running', attempts=attempts+1,
-                started_at=?, finished_at=NULL, progress=0 WHERE id=?""", (time.time(), row["id"])
+                started_at=?, finished_at=NULL, progress=0, error_code=NULL, error_message=NULL
+                WHERE id=?""", (time.time(), row["id"])
             )
         return self.get(row["id"])
 

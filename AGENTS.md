@@ -33,6 +33,8 @@ python tests/smoke.py --input CAMINHO                       # ensaio real, com m
 ```
 
 - Para o painel, valide também de ponta a ponta: `python whisper-box.py painel`, gravar, transcrever e abrir a pasta; confirme `NetworkMode: none` no worker e a porta apenas em `127.0.0.1`.
+- `prepare` constrói a imagem com `--build-arg SOURCE_DIGEST` (digest de `Dockerfile`, `requirements.lock`, `src/**/*.py` e `whisper-box.py`, gravado no rótulo `whisper-box.source-digest`); o `doctor` compara com o código local e indica `rebuild` se divergir. Imagem sem rótulo (`docker compose build worker` direto) não é comparável e é aceita.
+- Todo erro de comando de job posterior ao envio inclui `job_id`; stdout recebe sempre um único JSON e exceções inesperadas viram `operational_error` (código 1) sem traceback. `error` só existe em trabalhos `failed`.
 - Para atualizar código ou dependências: `python whisper-box.py stop`, reconstrua a imagem (`docker compose build worker`) e execute `start`. Os dados ficam fora da imagem. Não há migração automática de schemas de versões futuras. Arquivos em `painel/` não exigem rebuild.
 - Registre medições e ensaios em [docs/VALIDACAO.md](docs/VALIDACAO.md). Contratos: [A01](docs/actions/A01-transcricao-offline-docker.md) (motor e CLI) e [A02](docs/actions/A02-captura-ingestao-analise.md) (captura, painel, análise).
 

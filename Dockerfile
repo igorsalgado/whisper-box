@@ -8,5 +8,8 @@ RUN pip install --no-cache-dir -r requirements.lock && pip check
 COPY src ./src
 COPY tests ./tests
 COPY whisper-box.py ./
+# Rótulo com o digest do código (calculado por whisper-box.py); o doctor detecta imagem defasada.
+ARG SOURCE_DIGEST=unknown
+LABEL whisper-box.source-digest=$SOURCE_DIGEST
 ENTRYPOINT ["python", "-m", "whisper_box"]
 CMD ["worker"]

@@ -134,7 +134,12 @@ python whisper-box.py status --job "<job_id>"
 
 # Obtém o manifesto de saída de um trabalho concluído
 python whisper-box.py result --job "<job_id>"
+
+# Localiza transcrições (mais recentes primeiro; filtros opcionais, datas inclusivas no fuso do host)
+python whisper-box.py list --status succeeded --since 2026-11-19 --until 2026-11-20 --limit 20
 ```
+
+Revisão de 20/11/2026 (A03): `list` devolve `{"jobs": [...]}` com `job_id`, `source_name`, `status`, `language`, `created_at`/`started_at`/`finished_at` (ISO 8601 com fuso do host), `duration_seconds`, `progress_seconds` e, só em `succeeded` com saída verificada, `files` e `output_relative`; `error` só em `failed`. Padrão `--limit 20`, máximo 200; lista vazia é sucesso (`{"jobs": []}`); filtro inválido dá código 3. Nunca inclui texto da reunião. Todo erro posterior ao envio inclui `job_id`; os novos códigos de erro são `output_lost`, `unsupported_path`, `docker_timeout` e `interrupted`. Um trabalho `succeeded` com a saída perdida é reprocessado quando a mesma mídia é reenviada (novo `job_id`, `reused: false`). `error` só aparece em `failed`. Os códigos de saída 0 a 4 não mudaram.
 
 Revisão de 20/11/2026: `start` agora sobe worker e painel (`{"status":"ready","painel_url":...}`) e `stop` para os dois; o comando `painel` abre a interface para o humano (ver A02).
 

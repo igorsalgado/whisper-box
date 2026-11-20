@@ -134,9 +134,33 @@ Escopo: serviço `painel` no Compose (`python -m whisper_box painel`), interface
 - Linux e macOS como host (o ajudante usa `xdg-open` e `open`, cobertos somente por testes).
 - Fluxo de ponta a ponta com o Chrome.
 
+## Revisão de 20/11/2026 — contrato do motor (A03)
+
+Escopo: [A03](actions/A03-contrato-do-motor.md), achados I1 a I6, comando `list` e itens menores. Sem mudança de inferência (`pipeline_version` e `effective_config` intactos). Ambiente: Windows 11, Python 3.14.3 no host, Docker Desktop (engine Linux) e Compose 5.1.0.
+
+| Verificação | Resultado |
+| --- | --- |
+| Suíte no Docker sem rede | **118 testes aprovados** (76 antes): 26 de jobs, 4 de pipeline, 69 do wrapper e 19 do painel. |
+| Sintaxe do wrapper | `ast.parse(..., feature_version=(3, 8))` aprovado; não havia Python 3.8 instalado para executar. |
+| `doctor` real | `ready: true`, `next_step: ask_for_recording`; com a imagem construída com o rótulo `whisper-box.source-digest`, `image_current` ok. |
+| `transcribe --input ""`, `--job ""`, `--job abc` | Código 3, um JSON `invalid_arguments`, stderr vazio no primeiro caso (sem traceback). |
+| `list --limit 3`, `list --since/--until 2026-11-19`, `list --limit 0` | JSON com trabalhos reais (sem texto da reunião), `{"jobs": []}` e código 3. |
+| `transcribe --input` real: WAV sintético de 4 s em `C:	mp`, nome com espaços e acento, gerado na imagem com `--network none` | Código 0 em cerca de 17 s, um JSON com `files` e `output_relative`, sem chamada `result` (uma execução de container a menos). |
+| I6 no ambiente real: `saida/<job_id>` renomeada (não apagada), mesma mídia reenviada | `reused: false`, novo `job_id`; o antigo ficou `failed/output_lost` com registro preservado; o novo chegou a `succeeded`. A pasta original foi restaurada. |
+| Worker após `start` | `NetworkMode: none`, 2 CPUs e 4 GiB mantidos; worker e painel `healthy`. |
+
+Decisões e desvios:
+
+- **I4 (bind mount com `:`):** `docker compose run` (Compose 5.1.0) só aceita `-v/--volume`; não tem `--mount`. Caminho com `:` além da letra da unidade é **rejeitado** antes do Docker (`unsupported_path`, código 3). Caminhos do Windows com letra de unidade continuam funcionando.
+- **Caminhos UNC (`\\servidor\pasta`):** não havia compartilhamento de rede para testar no Docker Desktop. Foram **rejeitados** com `unsupported_path` (código 3) no Windows, exceto o prefixo `\\?\`. O suporte, se existir, não foi testado.
+- **Imagem defasada:** `prepare` constrói com `--build-arg SOURCE_DIGEST`; o `Dockerfile` grava o rótulo `whisper-box.source-digest`. Uma imagem construída sem o argumento (por exemplo, `docker compose build worker` direto) fica sem rótulo comparável e é aceita pelo `doctor`.
+- **Timeouts e Ctrl+C:** cobertos por testes simulados (remoção do container nomeado com `docker rm -f`). O Ctrl+C real contra um `docker compose run` não foi ensaiado.
+- **Observação (fora do escopo):** `submit` pelo wrapper monta o arquivo como `/source/recording.<ext>`; por isso `source_name` dos trabalhos enviados pela CLI é `recording.<ext>` e não o nome original.
+- A captura real de áudio pelo painel (Chrome/Edge, sistema e microfone) foi validada pelo usuário em 20/11/2026 (“todas as funcionalidades estão ok”); isso é registro de aceite do usuário, não medição.
+
 ## Limites desta validação
 
-- Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima), com a captura real ainda por validar.
+- Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima) e a captura real foi aprovada pelo usuário na mesma data.
 - Sem ensaio em Linux/macOS como host ou arquitetura ARM.
 - Sem teste de queda de energia, corrupção do volume ou restauração de backup.
 - Não há garantia de prazo ou precisão para outras gravações; ruído, duração de fala e carga concorrente alteram os resultados.

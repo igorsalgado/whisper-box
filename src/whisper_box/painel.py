@@ -427,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
         item = {"job_id": job["id"], "status": job["status"], "progress_seconds": job["progress"],
                 "created_at": job["created_at"], "started_at": job["started_at"],
                 "finished_at": job["finished_at"], "source_name": job["source_name"]}
-        if job["error_code"]:
+        if job["status"] == "failed" and job["error_code"]:
             item["error"] = {"code": job["error_code"], "message": job["error_message"]}
         if job["status"] == "succeeded":
             item["pasta"] = self._pasta(job["id"])

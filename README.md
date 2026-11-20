@@ -90,7 +90,7 @@ Não há limpeza automática de `entrada/` e `saida/`. Em Linux, arquivos criado
 - Uma gravação do painel tem no máximo 2 GiB. Fechar a janela no meio de uma gravação perde o que ainda não foi enviado (poucos segundos); o que já chegou fica em `entrada/.gravacoes/`.
 - A transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão. Fronteiras de cinco minutos podem dividir palavras. Silêncio gera texto vazio com `no_speech: true`; mídia sem áudio falha.
 - O motor processa um trabalho por vez, em CPU, com `small`/`int8`. Se o worker cair no meio, o arquivo recomeça, com até três tentativas automáticas.
-- Validado em Windows com Docker Linux amd64. A captura real de áudio do sistema ainda aguarda validação documentada ([VALIDACAO.md](docs/VALIDACAO.md)); Linux, macOS e ARM não foram ensaiados.
+- Validado em Windows com Docker Linux amd64. A captura real de áudio do sistema e do microfone no painel foi validada pelo usuário em 20/11/2026 (“todas as funcionalidades estão ok”; registro em [VALIDACAO.md](docs/VALIDACAO.md)); Linux, macOS e ARM não foram ensaiados.
 
 ## Mais detalhes
 
@@ -159,6 +159,7 @@ A resposta é um JSON com `ready`, `platform`, `project_root`, `checks` e **um**
 | --- | --- |
 | `install_docker` / `install_compose` | Explique ao usuário e peça permissão (`requires_user_approval: true`). Instale com o comando de `next_step.action`. Pode exigir administrador, WSL 2 ou reinício; se você não puder executar, entregue a instrução ao usuário e aguarde. |
 | `start_docker` | Inicie o Docker conforme `action`, aguarde até cerca de 2 minutos e rode `doctor` novamente. |
+| `rebuild` | A imagem Docker está defasada em relação ao código local (`requires_user_approval: false`). Execute o comando de `next_step.action` (`python whisper-box.py stop` e depois `docker compose build ... worker`) e rode `doctor` de novo. |
 | `prepare` | Avise que será baixado ~500 MB uma única vez, com internet. Com o ok, execute `python whisper-box.py prepare` (pode levar vários minutos). |
 | `ask_for_recording` | Ambiente pronto. Vá ao passo 3. |
 
@@ -171,7 +172,7 @@ Se o caminho ainda não estiver na conversa, pergunte:
 > Qual gravação devo transcrever? Envie o caminho completo do arquivo — por exemplo `C:\Reunioes\call.mp4` ou `/home/voce/Reunioes/call.mp4`. Aceito vídeo ou áudio (mp4, mp3, wav, m4a…). A gravação precisa estar finalizada. Vou transcrever em português, a menos que você prefira inglês, espanhol ou detecção automática.
 
 - O arquivo precisa estar **no computador que roda o Docker**. Se o usuário anexou o arquivo na conversa e ele já existe localmente, use esse caminho; caso contrário, peça o caminho local.
-- Caminhos com espaços e acentos são aceitos.
+- Caminhos com espaços e acentos são aceitos. Caminhos POSIX com `:` e caminhos de rede (`\\servidor\pasta`, não testados) são recusados com `unsupported_path` (código 3): peça ao usuário para copiar o arquivo para um disco local, em um caminho sem `:`.
 - Uma gravação por chamada. Para várias, transcreva em sequência.
 
 ## Passo 4 — Transcrever
@@ -189,7 +190,8 @@ python whisper-box.py transcribe --input "CAMINHO" --language pt
 python whisper-box.py transcribe --job JOB_ID
 ```
 
-- **Nunca** submeta a mesma gravação de novo só porque a espera terminou: a fila continua processando. Mesmo que submeta, os mesmos bytes com o mesmo idioma reutilizam o trabalho existente (`reused: true`).
+- **Nunca** submeta a mesma gravação de novo só porque a espera terminou: a fila continua processando. Mesmo que submeta, os mesmos bytes com o mesmo idioma reutilizam o trabalho existente (`reused: true`). A exceção é o trabalho `succeeded` cuja pasta `saida/<job_id>/` foi perdida: reenviar a mesma gravação o reprocessa (novo `job_id`, `reused: false`; o antigo fica `failed` com `output_lost`).
+- Falhas transitórias do Docker durante a espera são repetidas até 2 vezes (2 s e 5 s) pelo próprio comando. Todo erro depois do envio traz o `job_id` em stdout; Ctrl+C devolve `interrupted` e estouro de tempo de um subprocesso devolve `docker_timeout`, ambos com código 1 e o container de CLI removido.
 - Referência medida: 23 minutos de áudio levaram cerca de 3 minutos em CPU. Informe ao usuário que gravações longas podem levar vários minutos.
 
 ## Passo 5 — Interpretar e responder
@@ -200,7 +202,7 @@ python whisper-box.py transcribe --job JOB_ID
 | `1` | Falha da transcrição ou do ambiente. | Relate `error.code` e `error.message`; consulte a tabela de erros. |
 | `2` | Orçamento de espera esgotado; o trabalho continua. | Informe o `job_id` e retome com `transcribe --job`. |
 | `3` | Argumento, arquivo ou trabalho inválido. | Corrija ou peça outro caminho ao usuário. |
-| `4` | `result` de trabalho ainda pendente. | Use `wait` e repita `result`. |
+| `4` | `result` de trabalho ainda pendente (não ocorre em `transcribe`). | Use `wait` e repita `result`. |
 
 Resposta de sucesso (Windows; em Linux/macOS os caminhos são `/home/.../saida/...`):
 
@@ -240,7 +242,12 @@ Se o usuário pediu resumo, ata, decisões ou tarefas, leia `files.text` nessa e
 | `invalid_media`, `no_audio` | O arquivo não tem áudio legível; peça outro. |
 | `browser_not_found` (`painel`) | Edge ou Chrome ausente: informe a URL da mensagem ou defina `WHISPER_BOX_NAVEGADOR` com o caminho do executável. |
 | `failed` com outro motivo | Relate o erro; uma nova submissão cria outro `job_id` e preserva o histórico. |
-| `output_incomplete`, `output_unreachable` | Não apague nada; relate ao usuário com o `job_id`. |
+| `output_incomplete` | A pasta `saida/<job_id>/` sumiu ou foi alterada. Não apague nada; reenvie a mesma gravação para reprocessar (o job antigo passa a `output_lost`). |
+| `output_lost` | Job antigo cuja saída foi perdida e que já foi reprocessado em outro `job_id`. Use o `job_id` novo de `submit`/`list`. |
+| `output_unreachable` | Os arquivos existem no motor, mas o host não os alcança. Não apague nada; relate ao usuário com o `job_id`. |
+| `unsupported_path` | Caminho com `:` (POSIX) ou de rede (UNC): peça uma cópia em disco local, em um caminho sem `:`. |
+| `docker_timeout`, `interrupted` | O Docker não respondeu a tempo ou houve Ctrl+C. Com `job_id`, retome com `transcribe --job`; sem ele, rode `doctor` e repita. |
+| `operational_error` | Falha inesperada do wrapper (o tipo da exceção vai para stderr). Rode `doctor` e repita. |
 | Worker encerrado por memória | Relate; peça ao usuário para reduzir outras cargas. Não altere limites por conta própria. |
 
 ## Referência
@@ -254,16 +261,17 @@ Todos são `python whisper-box.py COMANDO` e escrevem um único JSON em stdout (
 | `doctor` | Diagnostica Python, Docker, Compose, engine, imagem e modelo; indica um `next_step`. Código 0 quando pronto, 1 caso contrário. |
 | `transcribe --input CAMINHO` | Fluxo completo: start do worker, submit, espera renovada e resultado verificado. Aceita `--language` (`pt`, `en`, `es`, `auto`; padrão `pt`) e `--timeout-seconds`. |
 | `transcribe --job ID` | Retoma um trabalho existente, sem submeter de novo (não aceita `--language`). |
-| `prepare` | Uma vez, com internet: constrói a imagem e baixa/verifica o modelo. Preserva a revisão já instalada. |
+| `prepare` | Uma vez, com internet: constrói a imagem (saída do build em stderr) e baixa/verifica o modelo. Preserva a revisão já instalada. Um único JSON em stdout, inclusive em falha. |
 | `start` | Sobe worker **e painel**. Devolve `{"status":"ready","painel_url":"http://127.0.0.1:8765/"}`. Se só o painel falhar, devolve `painel_error` no lugar de `painel_url`; o código de saída segue o do worker. |
 | `stop` | Para worker e painel; fila, modelo e arquivos são preservados. Devolve `{"status":"stopped"}`. |
 | `painel` | Para o humano: garante worker e painel no ar, abre Edge/Chrome em modo app (perfil `.navegador/`, janela 380×640) e mantém um ajudante em `127.0.0.1:8766` (próximas portas se ocupada; `WHISPER_BOX_AJUDANTE_PORT`), com token por execução, que abre `saida/<job_id>` no gerenciador de arquivos. Imprime `{"status":"open","painel_url":"...","ajudante_port":8766}` e **bloqueia** até a janela fechar ou Ctrl+C. Procura o navegador em locais padrão ou em `WHISPER_BOX_NAVEGADOR`; sem ele devolve `browser_not_found` (código 1) com a URL na mensagem. |
 | `submit --input CAMINHO [--language pt]` | Só enfileira e devolve `job_id`. Não sobe o worker; rode `start` antes. |
 | `wait --job ID --timeout 30` | Aguarda de 1 a 60 segundos; código 2 se o tempo acabar. |
+| `list [--status S] [--since AAAA-MM-DD] [--until AAAA-MM-DD] [--limit N]` | Localiza transcrições, do mais recente ao mais antigo (`{"jobs": [...]}`, lista vazia é sucesso). `--limit` de 1 a 200 (padrão 20); `--since`/`--until` inclusivos no fuso do host; `--status` em `queued`, `running`, `succeeded`, `failed`. Cada item traz `job_id`, `source_name`, `status`, `language`, `created_at`/`started_at`/`finished_at` (ISO 8601 com fuso), `duration_seconds`, `progress_seconds` e, só em `succeeded` com saída verificada, `files` e `output_relative`; `error` só em `failed`. Nunca inclui texto da reunião. Valores inválidos: código 3. |
 | `status --job ID` / `result --job ID` | Estado e progresso / caminhos verificados; `result` devolve código 4 se o trabalho ainda estiver pendente. |
 | `logs` | Últimos 50 eventos do worker, para diagnóstico. |
 
-Estados: `queued`, `running`, `succeeded`, `failed`. `progress_seconds` é a posição processada no áudio, não uma previsão de término.
+Estados: `queued`, `running`, `succeeded`, `failed`. `progress_seconds` é a posição processada no áudio, não uma previsão de término. O campo `error` só aparece em `failed`; um trabalho recolocado na fila após interrupção do worker não o traz.
 
 Variáveis de ambiente: `WHISPER_BOX_PAINEL_PORT` (porta do painel, padrão 8765), `WHISPER_BOX_AJUDANTE_PORT` (padrão 8766), `WHISPER_BOX_NAVEGADOR` (executável do navegador).
 

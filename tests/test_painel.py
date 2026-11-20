@@ -249,6 +249,22 @@ class PainelTest(unittest.TestCase):
         self.assertNotIn(self.temp.name, json.dumps(body))
         self.assertNotIn('pasta', items[0])  # só em trabalhos concluídos
 
+    def test_requeued_job_after_recover_has_no_error_but_failed_job_has(self):
+        job_id = self.enqueue_job()
+        store = Store(self.settings.state)
+        store.claim()
+        store.recover(job_id)
+        item = self.call('GET', '/api/transcricoes')[1]['transcricoes'][0]
+        self.assertEqual(item['status'], 'queued')
+        self.assertNotIn('error', item)
+        for _ in range(2):
+            store.claim()
+            store.recover(job_id)
+        store.claim()
+        store.recover(job_id)
+        item = self.call('GET', '/api/transcricoes')[1]['transcricoes'][0]
+        self.assertEqual((item['status'], item['error']['code']), ('failed', 'interrupted_limit'))
+
     def test_folder_path_for_succeeded_jobs_follows_host_root(self):
         job_id = self.enqueue_job()
         self.publish(job_id)

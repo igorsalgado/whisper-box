@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 import uuid
+from datetime import datetime, time as day_time, timedelta, timezone
 from pathlib import Path
 
 from .config import BoxError, Settings, effective_config
@@ -60,7 +61,8 @@ def submit(settings: Settings, source: Path, language: str) -> dict:
         ).hexdigest()
         store = Store(settings.state)
         selected, reused = store.enqueue(
-            job_id, fingerprint, input_hash, str(target), source.name, config
+            job_id, fingerprint, input_hash, str(target), source.name, config,
+            is_valid=lambda job: output_state(settings, job) != "lost",
         )
     except BaseException:
         shutil.rmtree(directory)
@@ -70,18 +72,34 @@ def submit(settings: Settings, source: Path, language: str) -> dict:
     return {"job_id": selected, "status": store.get(selected)["status"], "reused": reused}
 
 
-def complete_output(settings: Settings, job: dict) -> bool:
+def output_state(settings: Settings, job: dict) -> str:
+    """'ok', 'lost' (ausente, inválida ou alterada) ou 'unknown' (erro de E/S que não prova perda)."""
     directory = settings.outputs / job["id"]
     try:
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         if manifest["fingerprint"] != job["fingerprint"]:
-            return False
+            return "lost"
         for name in ARTIFACTS.values():
             if sha256_file(directory / name) != manifest["sha256"][name]:
-                return False
-        return True
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
+                return "lost"
+        return "ok"
+    except (FileNotFoundError, NotADirectoryError, ValueError, KeyError, TypeError):
+        return "lost"
+    except OSError:
+        return "unknown"
+
+
+def complete_output(settings: Settings, job: dict) -> bool:
+    return output_state(settings, job) == "ok"
+
+
+def host_files(settings: Settings, job_id: str) -> dict:
+    join = ntpath.join if "\\" in settings.host_root else os.path.join
+    return {
+        key: join(settings.host_root, "saida", job_id, name)
+        if settings.host_root else str(settings.outputs / job_id / name)
+        for key, name in ARTIFACTS.items()
+    }
 
 
 def status(settings: Settings, job_id: str, include_files: bool = False) -> dict:
@@ -91,20 +109,68 @@ def status(settings: Settings, job_id: str, include_files: bool = False) -> dict
         "progress_seconds": job["progress"], "created_at": job["created_at"],
         "started_at": job["started_at"], "finished_at": job["finished_at"],
     }
-    if job["error_code"]:
+    # Erro anterior (por exemplo, interrupção recuperada) não aparece em job que segue ativo.
+    if job["status"] == "failed" and job["error_code"]:
         response["error"] = {"code": job["error_code"], "message": job["error_message"]}
     if include_files and job["status"] == "succeeded":
         if not complete_output(settings, job):
-            raise BoxError("output_incomplete", "Os arquivos de saída estão ausentes ou foram alterados.")
-        relative = f"saida/{job_id}"
-        join = ntpath.join if "\\" in settings.host_root else os.path.join
-        response["files"] = {
-            key: join(settings.host_root, "saida", job_id, name)
-            if settings.host_root else str(settings.outputs / job_id / name)
-            for key, name in ARTIFACTS.items()
-        }
-        response["output_relative"] = relative
+            raise BoxError("output_incomplete", "Os arquivos de saída estão ausentes ou foram alterados. "
+                                                "Reenvie a mesma gravação para reprocessar.")
+        response["files"] = host_files(settings, job_id)
+        response["output_relative"] = f"saida/{job_id}"
     return response
+
+
+def _iso(epoch, offset_minutes: int):
+    if epoch is None:
+        return None
+    zone = timezone(timedelta(minutes=offset_minutes))
+    return datetime.fromtimestamp(epoch, zone).isoformat(timespec="seconds")
+
+
+def _duration(settings: Settings, job_id: str):
+    try:
+        value = json.loads((settings.outputs / job_id / ARTIFACTS["metadata"]).read_text(encoding="utf-8"))
+        value = value["duration_seconds"]
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def list_jobs(settings: Settings, status: str | None = None, since=None, until=None,
+              limit: int = 20, utc_offset_minutes: int = 0) -> dict:
+    """Lista trabalhos (mais recentes primeiro). `since` e `until` são datas inclusivas no fuso informado."""
+    if not 1 <= limit <= 200:
+        raise BoxError("invalid_arguments", "--limit deve estar entre 1 e 200.", 3)
+    if not -840 <= utc_offset_minutes <= 840:
+        raise BoxError("invalid_arguments", "--utc-offset-minutes deve estar entre -840 e 840.", 3)
+    zone = timezone(timedelta(minutes=utc_offset_minutes))
+
+    def midnight(day):
+        return datetime.combine(day, day_time(), tzinfo=zone).timestamp()
+
+    rows = Store(settings.state).list(
+        limit=limit, status=status,
+        since=midnight(since) if since else None,
+        until=midnight(until + timedelta(days=1)) if until else None)
+    items = []
+    for job in rows:
+        item = {
+            "job_id": job["id"], "source_name": job["source_name"], "status": job["status"],
+            "language": json.loads(job["config"]).get("language"),
+            "created_at": _iso(job["created_at"], utc_offset_minutes),
+            "started_at": _iso(job["started_at"], utc_offset_minutes),
+            "finished_at": _iso(job["finished_at"], utc_offset_minutes),
+            "duration_seconds": None, "progress_seconds": job["progress"],
+        }
+        if job["status"] == "succeeded" and complete_output(settings, job):
+            item["duration_seconds"] = _duration(settings, job["id"])
+            item["files"] = host_files(settings, job["id"])
+            item["output_relative"] = f"saida/{job['id']}"
+        if job["status"] == "failed" and job["error_code"]:
+            item["error"] = {"code": job["error_code"], "message": job["error_message"]}
+        items.append(item)
+    return {"jobs": items}
 
 
 def wait(settings: Settings, job_id: str, timeout: int):

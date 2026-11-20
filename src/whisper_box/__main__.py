@@ -1,6 +1,8 @@
 import argparse
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .config import BoxError, Settings
@@ -9,6 +11,15 @@ from .config import BoxError, Settings
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise BoxError("invalid_arguments", message, 3)
+
+
+def date_argument(value: str):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise argparse.ArgumentTypeError("use datas no formato AAAA-MM-DD.")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise argparse.ArgumentTypeError("data inexistente: " + value) from None
 
 
 def main():
@@ -24,6 +35,12 @@ def main():
         command.add_argument("--job", required=True)
         if name == "wait":
             command.add_argument("--timeout", default=30, type=int)
+    list_parser = commands.add_parser("list")
+    list_parser.add_argument("--status", choices=("queued", "running", "succeeded", "failed"))
+    list_parser.add_argument("--since", type=date_argument)
+    list_parser.add_argument("--until", type=date_argument)
+    list_parser.add_argument("--limit", type=int, default=20)
+    list_parser.add_argument("--utc-offset-minutes", type=int, default=0)
     args = parser.parse_args()
     settings = Settings.from_env()
     code = 0
@@ -45,6 +62,10 @@ def main():
     elif args.command == "submit":
         from .jobs import submit
         response = submit(settings, args.input, args.language)
+    elif args.command == "list":
+        from .jobs import list_jobs
+        response = list_jobs(settings, args.status, args.since, args.until, args.limit,
+                             args.utc_offset_minutes)
     elif args.command == "wait":
         from .jobs import wait
         response, code = wait(settings, args.job, args.timeout)
