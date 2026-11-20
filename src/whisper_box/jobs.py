@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, time as day_time, timedelta, timezone
 from pathlib import Path
 
-from .config import BoxError, Settings, effective_config
+from .config import BoxError, Settings, effective_config, stall_seconds
 from .model import read_manifest, sha256_file
 from .store import Store
 
@@ -23,6 +23,21 @@ def require_worker(settings: Settings):
             raise ValueError("Heartbeat expirado")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise BoxError("worker_unavailable", "Worker indisponível. Execute start e consulte os logs.") from exc
+
+
+def worker_health(settings: Settings, limit: float = None, now: float = None):
+    """Saúde para o healthcheck do Compose: heartbeat vivo e nenhum job `running` parado.
+
+    `require_worker` (usado por submit e painel) continua só conferindo o heartbeat: um job parado
+    não deve impedir novos envios.
+    """
+    require_worker(settings)
+    limit = stall_seconds() if limit is None else limit
+    now = time.time() if now is None else now
+    for job in Store(settings.state).running():
+        last = job.get("progress_at") or job.get("started_at") or now
+        if now - last > limit:
+            raise BoxError("job_stalled", "Um trabalho está sem progresso além do limite.")
 
 
 def submit(settings: Settings, source: Path, language: str) -> dict:

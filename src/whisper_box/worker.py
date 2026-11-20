@@ -6,8 +6,9 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
-from .config import BoxError, Settings
+from .config import BoxError, Settings, cpu_threads, runtime_config, stall_seconds
 from .jobs import complete_output
 from .model import read_manifest
 from .retention import (apply_input_retention, clean_partial, parse_policy, retention_start,
@@ -34,11 +35,38 @@ def worker_lock(settings: Settings):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def heartbeat(settings: Settings, stop: threading.Event):
+def peak_memory_bytes():
+    """Pico de memória do cgroup do container desde o início dele (não é por job); None se indisponível."""
+    try:
+        return int(Path("/sys/fs/cgroup/memory.peak").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def performance_fields(job: dict, metadata: dict) -> dict:
+    """Métricas do job para o log; só números (nunca texto, nome de arquivo ou caminho)."""
+    processing, duration = metadata["processing_seconds"], metadata["duration_seconds"]
+    return {"duration_seconds": duration, "processing_seconds": processing,
+            "rtf": round(processing / duration, 3) if duration else None,
+            "attempts": job["attempts"], "peak_memory_bytes": peak_memory_bytes()}
+
+
+def heartbeat(settings: Settings, stop: threading.Event, current: dict = None, limit: float = None):
+    """Sinal de vida a cada 3 s; inclui o job em execução e o instante do último progresso.
+
+    Se o job fica mais de `limit` s sem progresso, registra `job_stalled` uma vez (sem reiniciar nada).
+    """
+    current = {} if current is None else current
+    limit = stall_seconds() if limit is None else limit
     while not stop.is_set():
+        job_id, progress_at = current.get("job_id"), current.get("progress_at")
         temporary = settings.state / "heartbeat.tmp"
-        temporary.write_text(json.dumps({"timestamp": time.time(), "pid": os.getpid()}))
+        temporary.write_text(json.dumps({"timestamp": time.time(), "pid": os.getpid(),
+                                         "job_id": job_id, "progress_at": progress_at}))
         os.replace(temporary, settings.state / "heartbeat.json")
+        if job_id and progress_at and time.time() - progress_at > limit and current.get("stalled") != job_id:
+            current["stalled"] = job_id
+            log("job_stalled", job_id=job_id, seconds_without_progress=round(time.time() - progress_at))
         stop.wait(3)
 
 
@@ -89,11 +117,16 @@ def run(settings: Settings):
 
         signal.signal(signal.SIGTERM, interrupted)
         signal.signal(signal.SIGINT, interrupted)
-        thread = threading.Thread(target=heartbeat, args=(settings, stop), daemon=True)
+        current = {}
+        thread = threading.Thread(target=heartbeat, args=(settings, stop, current), daemon=True)
         thread.start()
         model = None
+        threads, threads_valid = cpu_threads()
+        if not threads_valid:
+            log("cpu_threads_invalid", fallback=threads)
+        loaded_threads = None
         try:
-            log("worker_ready", model="small", revision=manifest["revision"])
+            log("worker_ready", model="small", revision=manifest["revision"], **runtime_config(threads))
             while not stop.is_set():
                 job = store.claim()
                 if job is None:
@@ -102,22 +135,33 @@ def run(settings: Settings):
                         last_sweep = time.monotonic()
                     stop.wait(1)
                     continue
-                log("job_started", job_id=job["id"], attempt=job["attempts"])
+                log("job_started", job_id=job["id"], attempt=job["attempts"],
+                    queue_wait_seconds=round(max(0.0, (job["started_at"] or time.time()) - job["created_at"]), 3))
+                current.clear()
+                current.update(job_id=job["id"], progress_at=job["started_at"] or time.time())
+
+                def report(seconds, job_id=job["id"]):
+                    current["progress_at"] = store.progress(job_id, seconds)
+
                 try:
                     config = json.loads(job["config"])
                     if config["model_revision"] != manifest["revision"]:
                         raise BoxError("model_changed", "O modelo instalado não corresponde ao trabalho.")
-                    if model is None:
+                    # As threads fazem parte do fingerprint: o job roda com as threads com que foi enfileirado.
+                    job_threads = config.get("cpu_threads", threads)
+                    if model is None or loaded_threads != job_threads:
                         from faster_whisper import WhisperModel
+                        model = None  # libera o modelo anterior antes de carregar o novo
                         model = WhisperModel(
                             str(settings.models / "small"), device="cpu", compute_type="int8",
-                            cpu_threads=2, num_workers=1, local_files_only=True,
+                            cpu_threads=job_threads, num_workers=1, local_files_only=True,
                         )
-                        log("model_loaded", revision=manifest["revision"])
+                        loaded_threads = job_threads
+                        log("model_loaded", revision=manifest["revision"], cpu_threads=job_threads)
                     from .pipeline import transcribe
-                    transcribe(settings, job, model, lambda seconds: store.progress(job["id"], seconds))
+                    metadata = transcribe(settings, job, model, report, runtime_config(job_threads))
                     store.finish(job["id"])
-                    log("job_succeeded", job_id=job["id"])
+                    log("job_succeeded", job_id=job["id"], **performance_fields(job, metadata))
                     try:
                         freed = apply_input_retention(settings, store, job, policy, since=since)
                         if freed is not None:
@@ -132,6 +176,8 @@ def run(settings: Settings):
                     # Evita registrar falas ou nomes/caminhos da gravação nos logs.
                     log("job_failed", job_id=job["id"], code=error.code,
                         exception_type=type(exc).__name__)
+                finally:
+                    current.clear()
         finally:
             stop.set()
             thread.join(timeout=5)

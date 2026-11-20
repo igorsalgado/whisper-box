@@ -203,7 +203,7 @@ Exemplo ilustrativo de resposta final, com identificador e caminho substituídos
 - Worker e comandos de trabalho operam com `network_mode: none`. Somente a etapa explícita de preparação tem rede. *(Desde a A02, o serviço `painel` também tem rede, em bridge própria e só em `127.0.0.1`; o worker e a CLI seguem sem rede.)*
 - A imagem pronta não instala pacotes ao iniciar nem exige chaves de APIs.
 - Modelo carregado uma vez por execução do worker. Reiniciar o worker pode recarregá-lo do disco, sem download.
-- Primeiro perfil: `small`, CPU, `int8`, duas threads, um worker, português, `beam_size=5`, VAD e `condition_on_previous_text=False`, preservando a configuração de referência até medir qualidade.
+- *(A06, 20/11/2026: o padrão segue 2 CPUs/2 threads, mas as CPUs passaram a ser configuráveis por `WHISPER_BOX_CPUS`; 3 e 4 CPUs foram medidas em `VALIDACAO.md` e as threads entram no fingerprint.)* Primeiro perfil: `small`, CPU, `int8`, duas threads, um worker, português, `beam_size=5`, VAD e `condition_on_previous_text=False`, preservando a configuração de referência até medir qualidade.
 - Medir o consumo do áudio decodificado além do modelo. Se gravações de duas horas excederem o orçamento, ajustar a leitura/processamento antes de considerar o perfil aprovado.
 - Sem garantias antecipadas de velocidade ou precisão. Nomes próprios, siglas e falas sobrepostas precisam de revisão humana quando relevantes.
 - Texto e legendas mantêm os horários da gravação, inclusive após filtragem de silêncio.

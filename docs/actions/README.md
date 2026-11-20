@@ -13,7 +13,7 @@ Atualizado em 20/11/2026 (HEAD `7eec6ec`). Cada action é um documento autossufi
 | [A03](A03-contrato-do-motor.md) | Contrato do motor (ex-F0): I1 a I6, `list`, robustez do wrapper | **Concluída** em 20/11/2026 (`dda345f`; 118 testes, transcribe real com código 0) | — | — |
 | [A04](A04-retencao-e-limpeza-de-disco.md) | Retenção, `purge`, limpeza de `.partial` e staging, espaço livre | **Concluída** em 20/11/2026 (142 testes na integração; padrão `delete` por D1) | 1 | M |
 | [A05](A05-skill-de-analise.md) | Skill de análise de transcrições (ex-F1) | **Entregue, aguardando ensaio de uso real** (D2: 1 arquivo; skill, receita no AGENTS.md, verificador de citações; sem `analysis_path`) | 1 | S/M |
-| [A06](A06-desempenho-e-robustez-do-motor.md) | Desempenho e robustez: threads/CPU, `exec`, observabilidade, checkpoint condicional | Pronta (medir antes de mudar) | 2 | M/L |
+| [A06](A06-desempenho-e-robustez-do-motor.md) | Desempenho e robustez: threads/CPU, `exec`, observabilidade, checkpoint condicional | **Entregue** em 20/11/2026 (CPU configurável, `exec` nas consultas, observabilidade, healthcheck de progresso; threads continuam no fingerprint; checkpoint adiado por D4) | 2 | M/L |
 | [A07](A07-endurecimento-e-operacao.md) | Endurecimento, CI, consentimento, fronteiras de bloco, ensaios da F3 | Opcional, em blocos independentes | 3 | M |
 
 ### Para onde foi cada fase da A02

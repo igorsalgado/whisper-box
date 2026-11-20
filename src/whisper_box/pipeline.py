@@ -58,18 +58,22 @@ def timestamp(seconds: float, srt: bool = False) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def transcribe(settings: Settings, job: dict, model, progress):
-    """Produz a saída em saida/.partial e a publica; não deixa resíduo em falha ou interrupção."""
+def transcribe(settings: Settings, job: dict, model, progress, runtime: dict = None) -> dict:
+    """Produz a saída em saida/.partial e a publica; não deixa resíduo em falha ou interrupção.
+
+    Devolve os metadados publicados. `runtime` (threads/CPUs) é só auditoria: não entra no fingerprint.
+    """
     parent = settings.outputs / ".partial" / job["id"]
     temporary = parent / str(job["attempts"])
     temporary.mkdir(parents=True, exist_ok=False)
     try:
-        _produce(settings, job, model, progress, temporary)
+        metadata = _produce(settings, job, model, progress, temporary, runtime)
     except BaseException:  # inclui SystemExit do SIGTERM
         shutil.rmtree(temporary, ignore_errors=True)
         _remove_if_empty(parent)
         raise
     _remove_if_empty(parent)
+    return metadata
 
 
 def _remove_if_empty(directory: Path):
@@ -79,7 +83,7 @@ def _remove_if_empty(directory: Path):
         pass
 
 
-def _produce(settings: Settings, job: dict, model, progress, temporary: Path):
+def _produce(settings: Settings, job: dict, model, progress, temporary: Path, runtime: dict = None):
     config = json.loads(job["config"])
     started = time.monotonic()
     duration = vad_duration = 0.0
@@ -126,6 +130,7 @@ def _produce(settings: Settings, job: dict, model, progress, temporary: Path):
         "no_speech": count == 0, "detected_languages": sorted(detected_languages),
         "processing_seconds": round(time.monotonic() - started, 3),
         "attempt": job["attempts"], "interruptions": job["interruptions"],
+        "runtime": runtime or {},
     }
     (temporary / ARTIFACTS["metadata"]).write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -139,3 +144,4 @@ def _produce(settings: Settings, job: dict, model, progress, temporary: Path):
     if final.exists():
         raise BoxError("output_conflict", "Já existe uma saída incompatível para este trabalho.")
     temporary.rename(final)
+    return metadata

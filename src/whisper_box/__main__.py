@@ -62,8 +62,8 @@ def main():
         serve(settings)
         return 0
     elif args.command == "health":
-        from .jobs import require_worker
-        require_worker(settings)
+        from .jobs import worker_health
+        worker_health(settings)
         return 0
     elif args.command == "submit":
         from .jobs import submit

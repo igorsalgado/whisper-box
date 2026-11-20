@@ -1,7 +1,7 @@
 # A06 — Desempenho e robustez do motor (medir antes de mudar)
 
 Data: 20/11/2026
-Estado: pronta para execução; a tarefa 6 (checkpoint) é **condicional** (seção 4)
+Estado: **entregue em 20/11/2026** (tarefas 1, 3, 4, 5, 7 e 8; medições em [VALIDACAO.md](../VALIDACAO.md)). Tarefa 2 entregue **sem** retirar `cpu_threads` do fingerprint (a medição mostrou que as threads alteram o texto; sem bump de `pipeline_version`). Tarefa 6 (checkpoint) **adiada** por decisão D4; reabrir com dados de uso
 Prioridade: 4
 Tamanho: M/L (uma sessão com medições longas; o agente `dev-backend` trabalha com apoio do `infra`)
 Projeto: Whisper Box (`whisper-box`)

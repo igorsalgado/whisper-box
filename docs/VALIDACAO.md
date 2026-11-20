@@ -194,6 +194,58 @@ Escopo: [A05](actions/A05-skill-de-analise.md), decisão D2 (1 arquivo, `analise
 
 Não ensaiado: uso real da skill por um agente (critérios 1, 5, 6 e as métricas de 9/10 pedidos e 5 análises), pois exige o Igor com transcrições reais e um agente interativo. Tarefa 7 (`analysis_path` em `list` e mount `ro` no `cli`) não foi entregue: era opcional e evita conflito de `compose.yaml` com a A04; o agente checa a pasta no host.
 
+## Revisão de 20/11/2026 — desempenho e robustez do motor (A06)
+
+Escopo: [A06](actions/A06-desempenho-e-robustez-do-motor.md). Regra aplicada: **medir antes de mudar**. Decisão D4: o checkpoint por bloco (tarefa 6) **não foi implementado**; só a instrumentação que permite decidir depois. Ambiente: Windows 11, i5-12450H (12 threads lógicas), Docker Desktop com 12 CPUs e cerca de 5,8 GiB para a VM, Python 3.14.3 no host.
+
+### Linha de base (código anterior à A06)
+
+A gravação real de 23 min de 12/11 não existe mais em `entrada/` (retenção `delete`) e nenhuma gravação do usuário foi usada. O caso de benchmark é **fala sintética** gerada localmente com a voz pt-BR do Windows (SAPI, "Maria"), a partir de texto gerado por script (sem conteúdo real), em WAV 16 kHz mono cortado em **1.398,08 s** (mesma duração da linha de base de 12/11). É fala contínua e limpa, sem pausas; **não é equivalente** à gravação de reunião (por isso o RTF absoluto não se compara 1 a 1 com o de 12/11). Cada repetição usa uma cópia da mídia com 1 a N bytes nulos ao final (a original não muda) para contornar a deduplicação; os jobs de benchmark foram removidos depois com `purge --job ID --yes` (só os criados aqui).
+
+| Execução (imagem antiga, 2 CPUs / 2 threads) | processing_seconds | RTF | Segmentos | Hash do texto |
+| --- | --- | --- | --- | --- |
+| 1 | 194,204 | 0,1389 | 250 | `67219972…` |
+| 2 | 180,581 | 0,1292 | 250 | `67219972…` |
+| 3 | 184,702 | 0,1321 | 250 | `67219972…` |
+| **Média** | **186,5** | **0,1334** | | idêntico nas 3 |
+
+Referência de 12/11 (fala real): RTF 0,12. A média sintética fica 11% acima, dentro dos ±15% do critério 2; as diferenças de conteúdo e a máquina em uso (as edições de código e os `docker compose` do próprio trabalho rodaram durante as execuções 1 e 2) explicam a variação. O pico de memória do container nas execuções 2 e 3 (o container foi recriado entre a 1 e a 2): **942.809.088 bytes (0,88 GiB)**, abaixo dos 1,12 GiB de 12/11.
+
+### Matriz de CPUs/threads (imagem nova, 2 execuções por configuração)
+
+`WHISPER_BOX_CPUS` define `cpus` do container e as threads. `docker inspect` confirmou `NanoCpus` 2, 3 e 4 bilhões, `Memory` 4 GiB e `NetworkMode: none` em todas.
+
+| CPUs / threads | processing_seconds | RTF | Ganho vs 2/2 | Segmentos | Hash do texto | Pico de memória do container |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 / 2 (padrão) | 192,128 e 193,164 | 0,1374 e 0,1382 | — | 250 | `67219972…` | 992.342.016 (0,92 GiB) |
+| 3 / 3 | 147,946 e 146,796 | 0,1058 e 0,1050 | 1,31× | 248 | `92603a20…` | 965.292.032 (0,90 GiB) |
+| 4 / 4 | 135,580 e 136,614 | 0,0970 e 0,0977 | 1,41× | 262 | `7a40fa9a…` | 919.142.400 (0,86 GiB) |
+
+- **Instrumentação neutra:** o padrão com o código novo (RTF 0,1374 e 0,1382; 0,138 num terceiro job) ficou na faixa da linha de base (0,129 a 0,139).
+- **Equivalência de texto entre contagens de threads: NÃO.** Cada configuração é determinística (as duas repetições geram `segmentos.jsonl` byte a byte iguais), mas 2, 3 e 4 threads produzem textos e segmentações **diferentes** (250, 248 e 262 segmentos; só 191 de 250 segmentos de texto idênticos entre 2 e 3, e 129 entre 2 e 4). Num clipe de 60 s o texto coincidiu, mas o arquivo de segmentos não (tempos diferentes). Portanto, pela regra da tarefa 2, **`cpu_threads` permanece no fingerprint**, **não há bump de `pipeline_version`** (continua 0.1.0) e a deduplicação anterior com o padrão 2 é preservada. O achado vale para fala sintética contínua; não foi medida a qualidade (WER) de nenhuma configuração.
+- Mais CPU rende ganho decrescente (1,31× com 3, 1,41× com 4), sem custo de memória. O padrão continua em 2 (A01 §2: histórico de travamento da máquina com carga pesada); 3 ou 4 ficam como opção documentada.
+
+### Mudanças e verificação
+
+| Item | Resultado |
+| --- | --- |
+| Suíte no Docker sem rede | **178 testes aprovados** (150 antes): 28 novos (`tests/test_performance.py` com 18; `ExecTest` e `DoctorCpuTest` em `tests/test_wrapper.py`). |
+| `WHISPER_BOX_CPUS` | `cpus: ${WHISPER_BOX_CPUS:-2}`; `OMP_NUM_THREADS` e `WHISPER_BOX_CPU_THREADS` derivam dele. Sem variáveis: `NanoCpus 2000000000`, 4 GiB, `none`. `doctor` informa `cpus` só quando diferente de 2. `metadados.json` traz `runtime` (threads e CPUs reais do job). |
+| Threads por job | Com o worker em 4 CPUs, um job enfileirado com `WHISPER_BOX_CPU_THREADS=2` rodou com 2 threads (modelo recarregado em cerca de 4 s; `runtime` no metadado), e o mesmo áudio com 4 threads recebeu outro `job_id` (`reused: false`), como esperado. |
+| `exec` nas consultas (5 execuções cada, mediana, worker ocioso) | `status` 0,42 s, `result` 0,42 s, `wait --timeout 1` 0,44 s, `list` 0,46 s. Via `run --rm cli`: `status` 1,17 s, `wait` 1,47 s. |
+| Mesmo, com um job de 23 min em execução | `exec status` 0,64 s e `wait --timeout 1` 1,56 s (1 s é a própria espera); via `run`: 1,46 s e 2,39 s. Pico de memória do worker durante as consultas: 908 MB, igual ao de um job sem consultas. |
+| Fallback com worker parado | `status` devolve o mesmo JSON e código 0; job inexistente devolve `job_not_found` com código 3, igual ao caminho `exec`. Erros JSON do motor (códigos 1 a 4) nunca acionam o fallback (testes). |
+| Log do worker | `job_succeeded`: `duration_seconds 1398.08`, `processing_seconds 193.626`, `rtf 0.138`, `attempts 1`, `peak_memory_bytes 909090816`; `job_started` com `queue_wait_seconds 0.243`. Grep dos logs por nome de arquivo e palavras do texto sintético: 0 ocorrências. |
+| Healthcheck de progresso | `health` com `WHISPER_BOX_STALL_SECONDS=1` durante um job real: falhou em 5 de 6 tentativas (progresso a cada poucos segundos); com o padrão (1200 s) ficou saudável e o container `healthy`. Testes cobrem ocioso, progredindo, parado (job simulado), `submit` não bloqueado e heartbeat morto. `job_stalled` é só log. |
+| Banco real | O `jobs.sqlite` do usuário abriu e ganhou `progress_at` (12 registros legíveis, todos com `progress_at` nulo); teste com banco legado criado à mão também aprovado. |
+| Rede e limites | Worker `NetworkMode: none`, 2 CPUs padrão e 4 GiB; painel e worker `healthy` ao final, no padrão. |
+
+Limitações da medição: um único tipo de áudio (TTS, sem ruído, sem pausas), 2 repetições por configuração, máquina de uso normal durante as execuções; `memory.peak` é do container desde que subiu (não por job) e não pode ser zerado dentro do container. O RTF e o ganho por CPU em fala real de reunião podem diferir. Linux e macOS não foram medidos.
+
+### Dados para decidir o checkpoint (tarefa 6, adiada)
+
+Sem uso real suficiente para decidir. O que passa a existir para decidir depois: `interruptions` e `attempt` em `metadados.json`, eventos `job_started` repetidos por `job_id` nos logs, `job_stalled`, `rtf` e `peak_memory_bytes` por job. Custo de referência: a 0,14 de RTF, perder 55 min de uma gravação de 1 h custa cerca de 8 min de reprocessamento por tentativa; o limite continua em 3 tentativas. Critério sugerido para reabrir: duas ou mais interrupções em gravações acima de 30 min.
+
 ## Limites desta validação
 
 - Sem GPU, diarização ou adaptador para um sistema de agente específico. A interface web foi adicionada em 20/11/2026 (seção acima) e a captura real foi aprovada pelo usuário na mesma data.

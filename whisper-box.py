@@ -29,6 +29,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 COMMANDS = "doctor, prepare, start, stop, painel, transcribe, submit, status, wait, result, list, purge ou logs"
 JOB_COMMANDS = ("status", "wait", "result", "list", "purge")
+# Consultas leves: tentam `docker compose exec` no worker em execução (~1 s) antes do `run` (5 a 10 s).
+EXEC_COMMANDS = ("status", "wait", "result", "list")
+USE_EXEC = True
 LIFECYCLE_COMMANDS = ("start", "stop")
 ARTIFACTS = ("text", "srt", "segments", "metadata")
 IMAGE = "whisper-box:local"
@@ -160,6 +163,11 @@ def job_arguments(command: str, rest: list, name: str = None) -> list:
     return ["--profile", "tools", "run", "--rm"] + (["--name", name] if name else []) +         ["--no-deps", "-T", "cli", command] + list(rest)
 
 
+def exec_arguments(command: str, rest: list) -> list:
+    """Executa a CLI dentro do worker já em execução (sem criar container)."""
+    return ["exec", "-T", "worker", "python", "-m", "whisper_box", command] + list(rest)
+
+
 def start_arguments() -> list:
     return ["up", "-d", "--no-build", "--pull", "never", "--wait", "--wait-timeout", "90", "worker"]
 
@@ -223,6 +231,28 @@ def capture(arguments: list, env: dict, timeout: int = JOB_TIMEOUT, name: str = 
     return text, completed.returncode
 
 
+def capture_job(compose: list, command: str, rest: list, env: dict, timeout: int = JOB_TIMEOUT,
+                name: str = None) -> tuple:
+    """Como `capture`, mas consultas leves tentam `exec` no worker antes do `run --rm cli`.
+
+    O fallback para `run` só ocorre quando o `exec` não devolve um objeto JSON (container ausente ou
+    parado, comando indisponível). Resposta JSON do motor, inclusive de erro (códigos 1 a 4), é final.
+    """
+    if USE_EXEC and command in EXEC_COMMANDS:
+        try:
+            completed = subprocess.run(compose + exec_arguments(command, rest), stdout=subprocess.PIPE,
+                                       env=env, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise DockerTimeout()
+        except OSError:
+            completed = None
+        if completed is not None:
+            text = completed.stdout.decode("utf-8", "replace").strip()
+            if parse_json(text) is not None:
+                return text, completed.returncode
+    return capture(compose + job_arguments(command, rest, name), env, timeout, name)
+
+
 def interruption(error: BaseException, job_id: str = None) -> str:
     if isinstance(error, DockerTimeout):
         return error_json("docker_timeout", "O Docker nao respondeu no tempo esperado. Execute doctor.", job_id)
@@ -230,9 +260,13 @@ def interruption(error: BaseException, job_id: str = None) -> str:
 
 
 def run_cli(arguments: list, env: dict, out, timeout: int = JOB_TIMEOUT, name: str = None,
-            job_id: str = None) -> int:
+            job_id: str = None, job: tuple = None) -> int:
+    """`job` = (compose, comando, argumentos) usa `capture_job` (exec com fallback) no lugar de `arguments`."""
     try:
-        text, code = capture(arguments, env, timeout, name)
+        if job is not None:
+            text, code = capture_job(job[0], job[1], job[2], env, timeout, name)
+        else:
+            text, code = capture(arguments, env, timeout, name)
     except (DockerTimeout, KeyboardInterrupt) as error:
         print(interruption(error, job_id), file=out)
         return 1
@@ -295,6 +329,10 @@ def doctor(out) -> int:
     platform = platform_name()
     checks = {"python": {"ok": sys.version_info >= (3, 8), "detail": sys.version.split()[0]}}
     steps = []
+    cpus = os.environ.get("WHISPER_BOX_CPUS", "").strip()
+    if cpus and cpus != "2":  # informativo: o padrao (2 CPUs) nao aparece
+        threads = os.environ.get("WHISPER_BOX_CPU_THREADS", "").strip() or cpus
+        checks["cpus"] = {"ok": True, "detail": "WHISPER_BOX_CPUS=%s, threads=%s (padrao 2)" % (cpus, threads)}
 
     def check(name, ok, detail, step=None):
         checks[name] = {"ok": bool(ok), "detail": detail}
@@ -384,7 +422,7 @@ def transcribe(rest: list, env: dict, out) -> int:
         while True:
             name = cli_name()
             try:
-                text, code = capture(compose + job_arguments(command, extra, name), env, timeout, name)
+                text, code = capture_job(compose, command, extra, env, timeout, name)
             except (OSError, subprocess.SubprocessError) as error:
                 print(json.dumps({"event": "whisper_docker_failure", "type": type(error).__name__}),
                       file=sys.stderr, flush=True)
@@ -768,7 +806,7 @@ def main(argv: list, out=None) -> int:
             timeout = wait_timeout(rest) + 60
         elif command == "purge":
             timeout = PURGE_TIMEOUT
-        code = run_cli(compose + job_arguments(command, rest, name), env, out, timeout, name, job_from(rest))
+        code = run_cli(None, env, out, timeout, name, job_from(rest), (compose, command, rest))
     else:
         print(error_json("invalid_arguments", "Comando desconhecido. Use " + COMMANDS + "."), file=out)
         return 3

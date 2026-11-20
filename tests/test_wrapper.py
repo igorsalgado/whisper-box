@@ -12,6 +12,9 @@ WRAPPER = Path(__file__).resolve().parents[1] / 'whisper-box.py'
 spec = importlib.util.spec_from_file_location('whisper_box_wrapper', WRAPPER)
 wrapper = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wrapper)
+# Os testes legados simulam um unico `docker compose run`; o caminho `exec` (A06) tem testes proprios
+# (ExecTest), que reativam a opcao.
+wrapper.USE_EXEC = False
 
 
 def completed(code=0, stdout=b''):
@@ -811,3 +814,123 @@ class PurgeCommandTest(CallMixin, unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExecTest(CallMixin, unittest.TestCase):
+    """A06: consultas leves usam `exec` no worker em execucao, com fallback para `run --rm cli`."""
+
+    def setUp(self):
+        patcher = patch.object(wrapper, 'USE_EXEC', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_status_wait_result_list_try_exec_first(self):
+        body = b'{"job_id": "abc", "status": "running"}'
+        for argv in (['status', '--job', 'abc'], ['result', '--job', 'abc'],
+                     ['wait', '--job', 'abc', '--timeout', '5'], ['list', '--limit', '2']):
+            code, lines, calls = self.call(argv, [completed(0, body)])
+            self.assertEqual((code, len(calls), len(lines)), (0, 1, 1), argv)
+            arguments = calls[0][0]
+            self.assertEqual(arguments[arguments.index('exec'):arguments.index('exec') + 6],
+                             ['exec', '-T', 'worker', 'python', '-m', 'whisper_box'])
+            self.assertNotIn('run', arguments)
+            self.assertEqual(calls[0][1]['stdout'], subprocess.PIPE)
+
+    def test_engine_json_errors_and_codes_never_fall_back(self):
+        for code_in, body in ((3, b'{"error": {"code": "job_not_found", "message": "x"}}'),
+                              (1, b'{"error": {"code": "invalid_media", "message": "x"}}'),
+                              (2, b'{"status": "running", "timed_out": true}'),
+                              (4, b'{"status": "running"}')):
+            code, lines, calls = self.call(['result', '--job', 'abc'], [completed(code_in, body)])
+            self.assertEqual((code, len(calls), len(lines)), (code_in, 1, 1))
+
+    def test_invalid_exec_response_falls_back_to_run_with_the_same_contract(self):
+        body = b'{"job_id": "abc", "status": "succeeded"}'
+        for first in (completed(1, b''), completed(0, b'not json'), completed(1, b'[1, 2]')):
+            code, lines, calls = self.call(['status', '--job', 'abc'], [first, completed(0, body)])
+            self.assertEqual((code, len(calls)), (0, 2))
+            self.assertIn('exec', calls[0][0])
+            self.assertIn('run', calls[1][0])
+            self.assertEqual(calls[1][0][-6:], ['--no-deps', '-T', 'cli', 'status', '--job', 'abc'])
+            self.assertEqual(json.loads(lines[0])['status'], 'succeeded')
+
+    def test_fallback_reports_docker_error_when_both_fail(self):
+        code, lines, calls = self.call(['status', '--job', 'abc'], [completed(1, b''), completed(1, b'')])
+        self.assertEqual((code, len(calls), len(lines)), (1, 2, 1))
+        self.assertEqual(json.loads(lines[0])['error']['code'], 'docker_error')
+
+    def test_exec_oserror_falls_back_to_run(self):
+        calls = []
+
+        def fake_run(arguments, **kwargs):
+            calls.append(arguments)
+            if 'exec' in arguments:
+                raise OSError('indisponivel')
+            return completed(0, b'{"status": "queued"}')
+
+        out = io.StringIO()
+        with patch.object(wrapper.subprocess, 'run', side_effect=fake_run):
+            code = wrapper.main(['status', '--job', 'abc'], out)
+        self.assertEqual((code, len(calls)), (0, 2))
+        self.assertEqual(json.loads(out.getvalue())['status'], 'queued')
+
+    def test_exec_timeout_reports_docker_timeout_without_fallback(self):
+        job = 'c' * 32
+        calls = []
+
+        def fake_run(arguments, **kwargs):
+            calls.append(arguments)
+            raise subprocess.TimeoutExpired(['docker'], 1)
+
+        out = io.StringIO()
+        with patch.object(wrapper.subprocess, 'run', side_effect=fake_run):
+            code = wrapper.main(['status', '--job', job], out)
+        body = json.loads(out.getvalue())
+        self.assertEqual((code, body['job_id'], body['error']['code']), (1, job, 'docker_timeout'))
+        self.assertEqual(len(calls), 1)
+
+    def test_submit_and_purge_keep_using_run(self):
+        source = Path(tempfile.mkdtemp()) / 'a.wav'
+        source.write_bytes(b'x')
+        _, _, calls = self.call(['submit', '--input', str(source)], [completed(0, b'{"job_id": "a"}')])
+        self.assertNotIn('exec', calls[0][0])
+        _, _, calls = self.call(['purge', '--job', 'a' * 32], [completed(0, b'{"dry_run": true}')])
+        self.assertNotIn('exec', calls[0][0])
+        self.assertIn('cli', calls[0][0])
+
+    def test_wait_timeout_still_follows_requested_wait_via_exec(self):
+        _, _, calls = self.call(['wait', '--job', 'a' * 32, '--timeout', '45'],
+                                [completed(0, b'{"status": "succeeded"}')])
+        self.assertEqual(calls[0][1]['timeout'], 105)
+
+    def test_transcribe_waits_through_exec(self):
+        job = 'a' * 32
+        source = Path(tempfile.mkdtemp()) / 'a.wav'
+        source.write_bytes(b'x')
+        files = {}
+        for key in wrapper.ARTIFACTS:
+            path = source.parent / (key + '.out')
+            path.write_text('x')
+            files[key] = str(path)
+        done = completed(0, json.dumps({'job_id': job, 'status': 'succeeded', 'files': files}).encode())
+        submitted = completed(0, ('{"job_id": "%s", "status": "queued"}' % job).encode())
+        code, lines, calls = self.call(['transcribe', '--input', str(source)],
+                                       [completed(0), submitted, done])
+        self.assertEqual((code, len(lines)), (0, 1))
+        self.assertEqual([('exec' in c[0]) for c in calls], [False, False, True])
+
+
+class DoctorCpuTest(unittest.TestCase):
+    def run_doctor(self, environment):
+        out = io.StringIO()
+        with patch.dict(wrapper.os.environ, environment, clear=False),                 patch.object(wrapper.shutil, 'which', return_value=None):
+            wrapper.doctor(out)
+        return json.loads(out.getvalue())
+
+    def test_default_cpu_is_not_reported_and_custom_cpu_is(self):
+        base = {'WHISPER_BOX_CPUS': '', 'WHISPER_BOX_CPU_THREADS': ''}
+        self.assertNotIn('cpus', self.run_doctor(base)['checks'])
+        self.assertNotIn('cpus', self.run_doctor({**base, 'WHISPER_BOX_CPUS': '2'})['checks'])
+        detail = self.run_doctor({**base, 'WHISPER_BOX_CPUS': '4'})['checks']['cpus']
+        self.assertTrue(detail['ok'])
+        self.assertIn('WHISPER_BOX_CPUS=4', detail['detail'])

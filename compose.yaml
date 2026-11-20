@@ -10,6 +10,8 @@ x-runtime: &runtime
   pids_limit: 128
   environment: &environment
     HF_HUB_OFFLINE: "1"
+    # A06: as threads entram na deduplicacao; todo servico que enfileira precisa do mesmo valor do worker.
+    WHISPER_BOX_CPU_THREADS: ${WHISPER_BOX_CPU_THREADS:-${WHISPER_BOX_CPUS:-2}}
     WHISPER_BOX_STATE: /state
     WHISPER_BOX_INPUT: /input
     WHISPER_BOX_OUTPUT: /output
@@ -79,7 +81,12 @@ services:
       <<: *environment
       # A04: delete (padrao, decisao D1) apaga entrada/<job_id>/ apos sucesso verificado; keep ou <N>d.
       WHISPER_BOX_INPUT_RETENTION: ${WHISPER_BOX_INPUT_RETENTION:-delete}
-    cpus: 2
+      # A06: CPU configuravel (padrao 2). Threads e OMP derivam de WHISPER_BOX_CPUS; WHISPER_BOX_CPU_THREADS
+      # permite separar (benchmark). Memoria (4g) e rede nao mudam.
+      WHISPER_BOX_CPUS: ${WHISPER_BOX_CPUS:-2}
+      OMP_NUM_THREADS: ${WHISPER_BOX_CPU_THREADS:-${WHISPER_BOX_CPUS:-2}}
+      WHISPER_BOX_STALL_SECONDS: ${WHISPER_BOX_STALL_SECONDS:-1200}
+    cpus: ${WHISPER_BOX_CPUS:-2}
     mem_limit: 4g
     memswap_limit: 4g
     stop_grace_period: 20s

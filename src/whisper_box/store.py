@@ -34,6 +34,13 @@ class Store:
                 CREATE UNIQUE INDEX IF NOT EXISTS active_fingerprint ON jobs(fingerprint)
                     WHERE status IN ('queued','running','succeeded');
             """)
+            # Migração aditiva (A06): instante do último progresso, usado pelo healthcheck.
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "progress_at" not in columns:
+                try:
+                    db.execute("ALTER TABLE jobs ADD COLUMN progress_at REAL")
+                except sqlite3.OperationalError:  # outro processo migrou primeiro
+                    pass
 
     @contextmanager
     def connection(self):
@@ -119,6 +126,7 @@ class Store:
         return True
 
     def claim(self):
+        now = time.time()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -128,8 +136,8 @@ class Store:
                 return None
             db.execute(
                 """UPDATE jobs SET status='running', attempts=attempts+1,
-                started_at=?, finished_at=NULL, progress=0, error_code=NULL, error_message=NULL
-                WHERE id=?""", (time.time(), row["id"])
+                started_at=?, progress_at=?, finished_at=NULL, progress=0, error_code=NULL, error_message=NULL
+                WHERE id=?""", (now, now, row["id"])
             )
         return self.get(row["id"])
 
@@ -147,9 +155,12 @@ class Store:
                 interruptions=interruptions+1 WHERE id=? AND status='running'""", (job_id,)
             )
 
-    def progress(self, job_id, seconds):
+    def progress(self, job_id, seconds) -> float:
+        """Grava a posição processada e o instante (devolvido) do progresso."""
+        now = time.time()
         with self.connection() as db:
-            db.execute("UPDATE jobs SET progress=? WHERE id=?", (seconds, job_id))
+            db.execute("UPDATE jobs SET progress=?, progress_at=? WHERE id=?", (seconds, now, job_id))
+        return now
 
     def finish(self, job_id, error: BoxError | None = None):
         with self.connection() as db:

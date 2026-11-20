@@ -31,7 +31,7 @@ O mesmo motor também transcreve arquivos de áudio ou vídeo que você já tem 
 - [Python 3.8+](https://www.python.org/downloads/). Não precisa instalar pacotes: o wrapper usa só a biblioteca padrão.
 - [Docker](https://docs.docker.com/get-started/get-docker/) com engine Linux (no Windows e no macOS, o Docker Desktop). O FFmpeg já vem dentro da imagem.
 - Edge ou Chrome para a janela do painel. Sem eles, o painel abre em qualquer navegador pelo endereço `http://127.0.0.1:8765/`, mas o botão vira **Copiar caminho**.
-- Cerca de 500 MB de download (uma única vez), até 2 CPUs e 4 GiB de RAM livres durante a transcrição, e espaço em disco para as gravações e as cópias.
+- Cerca de 500 MB de download (uma única vez), até 2 CPUs (padrão; ajustável com `WHISPER_BOX_CPUS`) e 4 GiB de RAM livres durante a transcrição, e espaço em disco para as gravações e as cópias.
 
 ## Instalação com IA (recomendado)
 
@@ -120,7 +120,7 @@ Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, m
 - A captura exige Chrome ou Edge; Firefox e Safari não capturam o áudio do sistema. No macOS, o áudio do sistema no navegador é limitado.
 - Uma gravação do painel tem no máximo 2 GiB. Fechar a janela no meio de uma gravação perde o que ainda não foi enviado (poucos segundos); o que já chegou fica em `entrada/.gravacoes/`.
 - A transcrição é automática: nomes próprios, siglas, ruído e falas simultâneas podem exigir revisão. Fronteiras de cinco minutos podem dividir palavras. Silêncio gera texto vazio com `no_speech: true`; mídia sem áudio falha.
-- O motor processa um trabalho por vez, em CPU, com `small`/`int8`. Se o worker cair no meio, o arquivo recomeça, com até três tentativas automáticas.
+- O motor processa um trabalho por vez, em CPU, com `small`/`int8`. A fila é FIFO: uma gravação curta espera as longas que vieram antes (o log `job_started` traz `queue_wait_seconds`). Se o worker cair no meio, o arquivo recomeça do zero, com até três tentativas automáticas (sem retomada por bloco).
 - Validado em Windows com Docker Linux amd64. A captura real de áudio do sistema e do microfone no painel foi validada pelo usuário em 20/11/2026 (“todas as funcionalidades estão ok”; registro em [VALIDACAO.md](docs/VALIDACAO.md)); Linux, macOS e ARM não foram ensaiados.
 
 ## Mais detalhes
@@ -210,7 +210,7 @@ A resposta é um JSON com `ready`, `platform`, `project_root`, `checks` e **um**
 | `prepare` | Avise que será baixado ~500 MB uma única vez, com internet. Com o ok, execute `python whisper-box.py prepare` (pode levar vários minutos). |
 | `ask_for_recording` | Ambiente pronto. Vá ao passo 3. |
 
-Recursos: o worker usa até **2 CPUs e 4 GiB de RAM**, sem GPU. Garanta espaço para a imagem, o modelo e as cópias das gravações.
+Recursos: o worker usa por padrão até **2 CPUs e 4 GiB de RAM**, sem GPU. O número de CPUs é configurável (`WHISPER_BOX_CPUS`, abaixo); a memória não. Garanta espaço para a imagem, o modelo e as cópias das gravações.
 
 ## Passo 3 — Pedir a gravação ao usuário
 
@@ -323,9 +323,11 @@ Todos são `python whisper-box.py COMANDO` e escrevem um único JSON em stdout (
 | `status --job ID` / `result --job ID` | Estado e progresso / caminhos verificados; `result` devolve código 4 se o trabalho ainda estiver pendente. |
 | `logs` | Últimos 50 eventos do worker, para diagnóstico. |
 
+`wait`, `status`, `result` e `list` usam `docker compose exec` no worker em execução (cerca de 0,4 s por consulta) e caem para `run --rm cli` quando o worker está parado; o contrato (um JSON, códigos 0 a 4) é o mesmo. O log do worker (`python whisper-box.py logs`) registra, por job, `job_started` (com `queue_wait_seconds`) e `job_succeeded` (com `rtf`, `duration_seconds`, `processing_seconds`, `attempts` e `peak_memory_bytes`, o pico do container desde que subiu), além de `job_stalled` quando um job fica sem progresso além de `WHISPER_BOX_STALL_SECONDS`. `metadados.json` traz `runtime` (threads e CPUs).
+
 Estados: `queued`, `running`, `succeeded`, `failed`. `progress_seconds` é a posição processada no áudio, não uma previsão de término. O campo `error` só aparece em `failed`; um trabalho recolocado na fila após interrupção do worker não o traz.
 
-Variáveis de ambiente: `WHISPER_BOX_INPUT_RETENTION` (`delete` padrão, `keep` ou `<N>d`; lida pelo worker ao iniciar), `WHISPER_BOX_STAGING_DAYS` (gravações abandonadas do painel, padrão 7), `WHISPER_BOX_DISK_WARN_GIB` (aviso de pouco espaço, padrão 5), `WHISPER_BOX_PAINEL_PORT` (porta do painel, padrão 8765), `WHISPER_BOX_AJUDANTE_PORT` (padrão 8766), `WHISPER_BOX_NAVEGADOR` (executável do navegador).
+Variáveis de ambiente: `WHISPER_BOX_CPUS` (CPUs do worker, padrão 2; define também as threads de inferência, que **entram na deduplicação**: 2, 3 e 4 threads produzem textos diferentes, então mudar o valor reprocessa uma mídia já transcrita; lida ao subir o worker, então rode `stop` e `start` depois de mudar; use o mesmo valor em todos os comandos, de preferência num `.env` ao lado do `compose.yaml`; o `doctor` informa o valor quando não é 2), `WHISPER_BOX_CPU_THREADS` (threads, padrão igual a `WHISPER_BOX_CPUS`; separar os dois é para benchmark), `WHISPER_BOX_STALL_SECONDS` (job `running` sem progresso por mais de N s torna o healthcheck do worker vermelho e registra `job_stalled`; padrão 1200; não reinicia nada), `WHISPER_BOX_INPUT_RETENTION` (`delete` padrão, `keep` ou `<N>d`; lida pelo worker ao iniciar), `WHISPER_BOX_STAGING_DAYS` (gravações abandonadas do painel, padrão 7), `WHISPER_BOX_DISK_WARN_GIB` (aviso de pouco espaço, padrão 5), `WHISPER_BOX_PAINEL_PORT` (porta do painel, padrão 8765), `WHISPER_BOX_AJUDANTE_PORT` (padrão 8766), `WHISPER_BOX_NAVEGADOR` (executável do navegador).
 
 ### Garantias do sistema
 
