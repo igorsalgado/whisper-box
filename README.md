@@ -8,6 +8,7 @@ Grave uma reunião, deixe o computador transcrever sozinho e abra a pasta com o 
 | **Transcrições** | **Logs** |
 | <img src="docs/imagens/transcricoes.png" alt="Lista de transcrições com estado e botão Abrir pasta" width="260"> | <img src="docs/imagens/logs.png" alt="Tela de diagnóstico e eventos da sessão" width="260"> |
 
+- [Instalação com IA](#instalação-com-ia-recomendado): cole um prompt no seu agente e ele instala tudo.
 - [Para quem usa](#para-quem-usa) — instalar, gravar, transcrever.
 - [Para agentes](#para-agentes) — prompt operacional da CLI (é o que o `CLAUDE.md` importa).
 - Desenvolvimento: [AGENTS.md](AGENTS.md).
@@ -32,7 +33,27 @@ O mesmo motor também transcreve arquivos de áudio ou vídeo que você já tem 
 - Edge ou Chrome para a janela do painel. Sem eles, o painel abre em qualquer navegador pelo endereço `http://127.0.0.1:8765/`, mas o botão vira **Copiar caminho**.
 - Cerca de 500 MB de download (uma única vez), até 2 CPUs e 4 GiB de RAM livres durante a transcrição, e espaço em disco para as gravações e as cópias.
 
-## Instalação em 3 passos
+## Instalação com IA (recomendado)
+
+Você não precisa digitar nenhum comando. Abra um agente de código (Claude Code, Codex, Cursor ou similar) em um terminal, na pasta onde quer instalar, e **cole o prompt abaixo**. O agente clona o projeto, confere o ambiente e instala o que faltar, sempre pedindo sua permissão antes de instalar programas ou baixar o modelo. No fim, ele abre o painel.
+
+```text
+Instale o Whisper Box neste computador para mim.
+
+1. Clone https://github.com/igorsalgado/whisper-box (ou use o clone que já existir nesta pasta) e trabalhe na raiz dele.
+2. Leia o README.md inteiro, principalmente a seção "Para agentes", e siga as regras e a seção "Instalação a pedido do usuário".
+3. Antes de instalar qualquer programa (Python, Docker) ou de rodar o prepare (download de cerca de 500 MB), me explique o que vai fazer e peça minha permissão.
+4. Rode python whisper-box.py doctor até "ready": true, resolvendo o next_step que ele indicar.
+5. No fim, abra o painel com python whisper-box.py painel em segundo plano e me explique como gravar a primeira reunião.
+
+Não grave nem transcreva nada sem eu pedir.
+```
+
+- **Tempo:** com Python e Docker já instalados, de 5 a 15 minutos, quase todo no `prepare`. Instalar o Docker Desktop pode exigir administrador, WSL 2 e reiniciar o computador.
+- **Se precisar reiniciar:** depois do reinício, abra o agente na mesma pasta e cole o prompt de novo. Ele reaproveita o clone e continua de onde parou.
+- **Depois da instalação:** para abrir o painel de novo, rode `python whisper-box.py painel` na pasta do projeto ou peça ao agente "abra o painel do Whisper Box".
+
+## Instalação manual (3 passos)
 
 ```bash
 git clone https://github.com/igorsalgado/whisper-box.git
@@ -112,7 +133,7 @@ Em Linux, arquivos criados pelo container pertencem ao `root`: são legíveis, m
 
 > **Esta seção é um prompt.** Se você é um agente de código (Claude Code, Codex, Cursor ou similar), os textos abaixo são as suas instruções para operar este projeto pela CLI. Siga-os do início ao fim. Para alterar o projeto, siga o [AGENTS.md](AGENTS.md).
 >
-> Humano: entregue este repositório ao seu agente e diga **“Clone https://github.com/igorsalgado/whisper-box, leia o README e transcreva uma gravação minha.”**
+> Humano: para instalar, cole no seu agente o prompt de [Instalação com IA](#instalação-com-ia-recomendado). Para transcrever um arquivo que você já tem, diga **“Clone https://github.com/igorsalgado/whisper-box, leia o README e transcreva uma gravação minha.”**
 
 ## Sua missão
 
@@ -130,8 +151,23 @@ O projeto já contém o motor (faster-whisper `small`, CPU, `int8`, português p
 6. Não rode `prepare` a cada reunião; ele é feito uma única vez.
 7. Leia stdout como JSON e stderr como diagnóstico, em canais separados. Nunca use `2>&1` ao interpretar a resposta.
 8. Não cole a transcrição na conversa, a menos que o usuário peça resumo, ata ou análise.
-9. Não suba o painel (`painel`) por conta própria: ele é a interface do humano e bloqueia até a janela fechar. Rode-o somente se o usuário pedir, em segundo plano.
+9. Não suba o painel (`painel`) por conta própria: ele é a interface do humano e bloqueia até a janela fechar. Rode-o somente se o usuário pedir (o prompt de instalação pede), em segundo plano.
 10. **`purge --yes` só a pedido explícito do usuário.** Apaga entrada, saída e registro de forma irreversível. Em qualquer outro caso use apenas `purge` sem `--yes` (dry-run, que não altera nada) e mostre o resultado. Nunca use `purge` para “corrigir” falhas.
+
+## Instalação a pedido do usuário
+
+Quando o usuário pedir para **instalar** (por exemplo, colando o prompt de “Instalação com IA”), o objetivo é deixar o ambiente pronto e o painel aberto, sem transcrever nada:
+
+1. Execute os passos 0, 1 e 2 abaixo, nessa ordem, até o `doctor` devolver `"ready": true` com `next_step.code` igual a `ask_for_recording`. Peça permissão antes de cada instalação de software e antes do `prepare` (regra 2), e explique em uma frase o que cada um faz.
+2. Se uma instalação exigir reinício ou administrador e você não puder concluir, entregue ao usuário o comando exato e diga para, depois, abrir o agente na mesma pasta e colar o prompt de novo. Não crie outro clone: os passos são idempotentes e continuam de onde pararam.
+3. Com o ambiente pronto, abra o painel **em segundo plano**, porque o comando bloqueia até a janela fechar: `python whisper-box.py painel`. Esse é o pedido explícito previsto na regra 9. Confirme em stdout `{"status": "open", "painel_url": ...}`. Se vier `browser_not_found`, informe a URL `http://127.0.0.1:8765/` e explique que, fora da janela própria, o botão **Abrir pasta** vira **Copiar caminho**.
+4. Não pule para o passo 3 (pedir gravação), a menos que o usuário peça uma transcrição.
+5. Responda com:
+   - o que foi instalado e a pasta do projeto (`project_root` do `doctor`);
+   - como gravar: clicar em **Gravar**, escolher **Tela inteira**, marcar **Compartilhar áudio do sistema** e, ao terminar, clicar em **Parar** e depois em **Transcrever**;
+   - onde ficam as transcrições: aba **Transcrições** e **Abrir pasta** (`saida/<job_id>/`);
+   - como reabrir o painel depois: `python whisper-box.py painel` na pasta do projeto;
+   - um lembrete de que gravar uma reunião exige a ciência dos participantes.
 
 ## Passo 0 — Obter o projeto
 

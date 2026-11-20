@@ -2,7 +2,7 @@
 
 ## Operar (transcrever gravações)
 
-A seção “Para agentes” do [README.md](README.md) é o prompt operacional completo: missão, regras, passos (`doctor` → corrigir ambiente → pedir a gravação → `transcribe`), erros e referência de comandos. Siga-a quando o usuário pedir uma transcrição. A parte “Para quem usa” do mesmo arquivo é o guia humano (instalação, painel).
+A seção “Para agentes” do [README.md](README.md) é o prompt operacional completo: missão, regras, passos (`doctor` → corrigir ambiente → pedir a gravação → `transcribe`), erros e referência de comandos. Siga-a quando o usuário pedir uma transcrição. Quando ele pedir a **instalação** (o prompt de “Instalação com IA” do README), siga “Instalação a pedido do usuário”: ambiente pronto e painel aberto, sem transcrever. A parte “Para quem usa” do mesmo arquivo é o guia humano (instalação, painel).
 
 ## Analisar transcrições
 
